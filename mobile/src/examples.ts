@@ -17,7 +17,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🚌',
     bg: '#EFE6FF',
     title: 'The School Bus',
-    text: 'A school bus has 40 seats. 23 children get on at the first stop and 8 more get on at the second stop. How many seats are still empty?',
+    text: "A bus has 40 seats. 23 kids get on, then 8 more. How many seats are empty?",
   },
   {
     id: 'stickers',
@@ -25,7 +25,7 @@ export const EXAMPLES: Example[] = [
     emoji: '⚽',
     bg: '#E3F4FF',
     title: 'Football Stickers',
-    text: 'Leo has 36 football stickers. He gives 12 to his sister and then buys 9 more. How many stickers does Leo have now?',
+    text: "Leo has 36 stickers. He gives away 12, then buys 9. How many does he have now?",
   },
   {
     id: 'cookies',
@@ -33,7 +33,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🍪',
     bg: '#FFF1E2',
     title: 'Cookie Boxes',
-    text: 'Grandma baked 24 cookies. She puts them into 4 boxes with the same number in each box. How many cookies are in each box?',
+    text: "Grandma puts 24 cookies into 4 boxes equally. How many are in each box?",
   },
   {
     id: 'pizza',
@@ -41,7 +41,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🍕',
     bg: '#FFF6DA',
     title: 'Pizza Party',
-    text: 'A pizza is cut into 8 equal slices. Tom eats 3 slices and Mia eats 2 slices. What fraction of the pizza did they eat together?',
+    text: "A pizza has 8 slices. Tom eats 3 and Mia eats 2. What fraction did they eat?",
   },
   {
     id: 'cake',
@@ -49,7 +49,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🎂',
     bg: '#FFE9EE',
     title: 'Birthday Cake',
-    text: 'Mia baked a cake and cut it into 8 equal pieces. She gave 3 pieces to her friends and ate 1 piece herself. What fraction of the cake is left?',
+    text: "A cake has 8 pieces. 3 go to friends and Mia eats 1. What fraction is left?",
   },
   {
     id: 'chocolate',
@@ -57,7 +57,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🍫',
     bg: '#F5E8DF',
     title: 'Chocolate Bar',
-    text: 'A chocolate bar has 12 equal pieces. Sara eats one quarter of the bar. How many pieces does she eat?',
+    text: "A chocolate bar has 12 pieces. Sara eats one quarter. How many pieces is that?",
   },
   {
     id: 'giraffe',
@@ -65,7 +65,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🦒',
     bg: '#FFF6DA',
     title: 'Tall Giraffe',
-    text: 'A giraffe is 5 metres tall. How many centimetres tall is the giraffe?',
+    text: "A giraffe is 5 metres tall. How many centimetres is that?",
   },
   {
     id: 'snail',
@@ -73,7 +73,7 @@ export const EXAMPLES: Example[] = [
     emoji: '🐌',
     bg: '#E6F8EE',
     title: 'Snail Race',
-    text: 'A snail crawls 2 metres and 35 centimetres. How many centimetres did the snail crawl in total?',
+    text: "A snail crawls 2 m and 35 cm. How many centimetres is that?",
   },
   {
     id: 'bag',
@@ -81,6 +81,6 @@ export const EXAMPLES: Example[] = [
     emoji: '🎒',
     bg: '#E3F4FF',
     title: 'Heavy Backpack',
-    text: "Max's school bag weighs 3 kilograms. His lunch box weighs 500 grams. How many grams do they weigh together?",
+    text: "A bag weighs 3 kg and a lunch box 500 g. How many grams together?",
   },
 ];

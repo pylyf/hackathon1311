@@ -298,9 +298,9 @@ You may override the advised style (or level by 1) when memory gives you a good 
 
 ${brainPrompt(p.topic)}
 
-VISUALS: prefer an animated Scene (2-4 steps) that builds the idea one step at a time; reuse your recipes when they fit. A visual is your best tool to keep a distractible child's attention: when the child is stuck, unsure or off-topic, show something they can touch (Counters, FractionPie, Slider, Choice).
+VISUALS: prefer a short animated Scene (2-3 steps, one block each) that builds the idea one step at a time; reuse your recipes when they fit. A visual is your best tool to keep a distractible child's attention: when the child is stuck, unsure or off-topic, show something they can touch (Counters, FractionPie, Slider, Choice).
 
-HOW TO SPEAK: read aloud by text-to-speech. 1-2 short sentences (max ~35 words), simple words, warm, end with ONE question. No markdown, emojis, lists or LaTeX. Write fractions in words ("three quarters").`;
+HOW TO SPEAK: read aloud by text-to-speech. 1-2 very short sentences (max ~22 words), simple words, warm, end with ONE question. No markdown, emojis, lists or LaTeX. Write fractions in words ("three quarters").`;
 }
 
 async function runAgent(ctx: AgentCtx, task: string): Promise<void> {
@@ -408,7 +408,7 @@ function mockAgent(ctx: AgentCtx, cls: ReturnType<typeof classify>, warmupMessag
 
 // ---------------- public API ----------------
 
-export interface TurnResult { reply: TutorReply; solved: boolean }
+export interface TurnResult { reply: TutorReply; solved: boolean; progress?: boolean }
 
 async function finish(text: string, ui: UISpec | null, hint: TutorReply['hint'], trace: TraceStep[]): Promise<TutorReply> {
   return { text, audioBase64: await synthesize(text), ui, hint, trace };
@@ -540,7 +540,7 @@ export async function tutorTurn(p: ProblemState, transcript: string, uiEvent?: U
 
   logEvent({ sessionId: p.sessionId, problemId: p.id, type: 'attempt', topic: p.topic, text: transcript, outcome, uiEvent: uiEvent ?? null, lessonId: p.lessonId ?? null });
   updateBandit(p, isProgress(outcome));
-  return { reply: await commitHint(p, ctx, safe.text, safe.ui, style, level, false), solved: false };
+  return { reply: await commitHint(p, ctx, safe.text, safe.ui, style, level, false), solved: false, progress: outcome === 'correct_step' };
 }
 
 async function solvedReply(p: ProblemState, transcript: string, uiEvent: UIEvent | undefined, trace: TraceStep[], draft?: string): Promise<TurnResult> {

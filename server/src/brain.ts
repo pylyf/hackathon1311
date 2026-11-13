@@ -103,7 +103,7 @@ ${brainPrompt(p.topic)}
 
 ${UI_SPEC_DOC}
 
-Make a Scene with 3-4 steps that helps the child UNDERSTAND this problem and the method: step 1 shows the situation with concrete objects, middle steps show what happens / the key idea (a Callout is great here), the last step asks the child to do the final step themselves (an Equation with "?" or a Choice about a small step). Each "say" is one short sentence a child understands. Use the child's interests if natural.
+Make a SHORT Scene of 2-3 steps, one block per step, that helps the child UNDERSTAND the method: step 1 shows the situation with concrete objects (Counters, FractionPie, BarModel…), step 2 shows what changes, the last step asks the child to do the final step themselves (an Equation with "?" or a Choice about a small step). Prefer the clearest picture over many pictures. Keep numbers readable: Counters only up to ~30 objects; for bigger numbers use a BarModel or NumberLine. Always show the numbers GIVEN in the story (e.g. label a bar 36, not "start") — only the final result is secret. Each "say" is ONE short sentence of at most 10 words. Use the child's interests if natural.
 SECRET ANSWER: ${ans}. The scene must NEVER show or say it, or any equivalent form (no result shaded, no result counted, no "= ${p.answer.value}").${strict ? '\nYour previous scene leaked the answer. Stop one step earlier.' : ''}`,
     messages: [{ role: 'user', content: `Problem: ${p.text}\nQuestion: ${p.question}\nTopic: ${p.topic}` }],
     schema: SCENE_SCHEMA,

@@ -1,12 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { API_URL, api, errMsg } from '../api';
-import type { BrainResponse, ChildProfile, Curriculum, Lesson, ProgressResponse } from '../contract';
-import { StatusChip } from '../trace';
+import { api, errMsg } from '../api';
+import type { ChildProfile, Curriculum, Lesson, ProgressResponse } from '../contract';
 import { EXAMPLES, type Example } from '../examples';
-import { Bounce, Icon, Pop, StatChip, TOPIC } from '../game';
+import { Bounce, Icon, StatChip } from '../game';
 import { colors, ff, font } from '../theme';
-import { BigButton, BubbleText, ErrorBox, Mascot, SpeechBubble } from '../ui';
+import { BigButton, BubbleText, ErrorBox, Mascot, ProgressBar, SpeechBubble } from '../ui';
 
 export function nextLesson(c: Curriculum | null): Lesson | null {
   if (!c || !c.lessons.length) return null;
@@ -47,35 +46,42 @@ export default function HomeScreen({
   onRedoIntro: () => void;
 }) {
   const [p, setP] = useState<ProgressResponse | null>(null);
-  const [brain, setBrain] = useState<BrainResponse | null>(null);
-  const load = useCallback(() => {
+  useEffect(() => {
     api.progress().then(setP).catch(() => {});
-    api.brain().then(setBrain).catch(() => {});
   }, []);
-  useEffect(load, [load]);
 
-  const [more, setMore] = useState(false);
-  const [warmBusy, setWarmBusy] = useState(false);
-  const [warmError, setWarmError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const lesson = nextLesson(curriculum);
   const warmup = curriculum?.warmup ?? null;
-  const hasCurriculum = !!curriculum && curriculum.lessons.length > 0;
   const startWarmup = async () => {
-    setWarmBusy(true);
-    setWarmError(null);
+    setBusy(true);
+    setErr(null);
     try {
       await onWarmup();
     } catch (e) {
-      setWarmError(errMsg(e));
-      setWarmBusy(false);
+      setErr(errMsg(e));
+      setBusy(false);
     }
   };
 
   const name = profile?.name?.split(' ')[0];
-  const latest = brain?.changes[0];
-  // put examples matching the child's interests first
+  // an example that matches the child's interests
   const likes = (profile?.interests ?? []).map((x) => x.toLowerCase());
-  const examples = [...EXAMPLES].sort((a, b) => score(b, likes) - score(a, likes));
+  const pickExample = () => {
+    const liked = EXAMPLES.filter((e) => score(e, likes) > 0);
+    const pool = liked.length ? liked : EXAMPLES;
+    onExample(pool[Math.floor(Math.random() * pool.length)]);
+  };
+
+  // "Continue" = the warm-up, else the next textbook lesson, else a fun example
+  const upNext = warmup
+    ? { label: 'Quick warm-up', onPress: startWarmup }
+    : lesson
+      ? { label: lesson.title, onPress: () => onLesson(lesson) }
+      : { label: 'A fun problem to try', onPress: async () => pickExample() };
+  const lessons = curriculum?.lessons ?? [];
+  const mastered = lessons.filter((l) => l.status === 'mastered').length;
 
   return (
     <View style={{ flex: 1 }}>
@@ -83,9 +89,8 @@ export default function HomeScreen({
         <StatChip emoji="🔥" value={p?.streak ?? 0} color={colors.primary} />
         <StatChip emoji="🪨" value={p?.pebbles ?? 0} color={colors.otter} />
         <View style={{ flex: 1 }} />
-        <Pressable onPress={onLearned} style={styles.brainBtn} hitSlop={8}>
-          <Text style={{ fontSize: 18 }}>🧠</Text>
-          <Text style={styles.brainBtnText}>BRAIN</Text>
+        <Pressable onPress={onLearned} style={styles.brainBtn} hitSlop={8} accessibilityLabel="Nudge's brain">
+          <Text style={{ fontSize: 20 }}>🧠</Text>
         </Pressable>
       </View>
 
@@ -95,145 +100,73 @@ export default function HomeScreen({
             <BubbleText style={styles.hi}>
               {name ? (
                 <>
-                  Hi <Text style={styles.strong}>{name}</Text>! Show me a problem you're stuck on 👇
+                  Hi <Text style={styles.strong}>{name}</Text>! What are we solving today?
                 </>
               ) : (
-                "Hi! Show me a problem you're stuck on 👇"
+                'Hi! What are we solving today?'
               )}
             </BubbleText>
           </SpeechBubble>
-          <Bounce distance={8}>
-            <Mascot mood="hello" size={150} />
+          <Bounce distance={6}>
+            <Mascot mood="hello" size={160} />
           </Bounce>
         </View>
 
-        {warmup && (
-          <Pop>
-            <View style={styles.warm}>
-              <View style={styles.cardHead}>
-                <Bounce distance={3}>
-                  <Text style={{ fontSize: 30 }}>🔥</Text>
-                </Bounce>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.kicker, { color: colors.primaryDark }]}>WARM-UP</Text>
-                  <Text style={styles.cardText}>{warmup.message}</Text>
+        {curriculum && lessons.length > 0 && (
+          <Pressable onPress={onCurriculum}>
+            {({ pressed }) => (
+              <View style={[styles.course, { borderBottomWidth: pressed ? 2 : 4, marginTop: pressed ? 2 : 0 }]}>
+                <View style={styles.courseIcon}>
+                  <Text style={{ fontSize: 24 }}>📚</Text>
                 </View>
-              </View>
-              {warmError && <Text style={styles.err}>{warmError}</Text>}
-              <BigButton small label={warmBusy ? 'Getting ready…' : 'Warm up (1 min)'} onPress={startWarmup} disabled={warmBusy} />
-            </View>
-          </Pop>
-        )}
-
-        <BigButton label="Snap my homework" icon="📸" onPress={onSnap} />
-
-        {hasCurriculum && (
-          <View style={styles.today}>
-            <View style={styles.cardHead}>
-              <Text style={{ fontSize: 30 }}>📖</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.kicker, { color: colors.greenDark }]}>FROM YOUR TEXTBOOK</Text>
-                <Text style={styles.lessonTitle}>{lesson ? lesson.title : 'All lessons mastered! 🏆'}</Text>
-              </View>
-              <Pressable onPress={onCurriculum} hitSlop={10}>
-                <Text style={styles.link}>ALL ›</Text>
-              </Pressable>
-            </View>
-            {lesson ? (
-              <>
-                <Text style={styles.cardText}>{lesson.summary}</Text>
-                <StatusChip status={lesson.status} />
-                <BigButton small label="Start lesson" onPress={() => onLesson(lesson)} color={colors.green} />
-              </>
-            ) : (
-              <Text style={styles.cardText}>{curriculum!.title}</Text>
-            )}
-          </View>
-        )}
-
-        {sessionError && <ErrorBox message={sessionError} onRetry={onRetrySession} />}
-
-        <View style={styles.sectionHead}>
-          <Text style={styles.h2}>No homework? Try one!</Text>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.exRow}>
-          {examples.map((ex, i) => (
-            <Pop key={ex.id} delay={i * 70}>
-              <Pressable onPress={() => onExample(ex)}>
-                {({ pressed }) => (
-                  <View style={[styles.exCard, { backgroundColor: ex.bg, borderBottomWidth: pressed ? 2 : 5, marginTop: pressed ? 3 : 0 }]}>
-                    <Bounce distance={4}>
-                      <Text style={styles.exEmoji}>{ex.emoji}</Text>
-                    </Bounce>
-                    <Text style={styles.exTitle} numberOfLines={2}>
-                      {ex.title}
-                    </Text>
-                    <Text style={[styles.exTopic, { color: TOPIC[ex.topic].dark }]}>{TOPIC[ex.topic].label.toUpperCase()}</Text>
-                  </View>
-                )}
-              </Pressable>
-            </Pop>
-          ))}
-        </ScrollView>
-
-        <Pressable onPress={onLearned}>
-          {({ pressed }) => (
-            <View style={[styles.brainCard, { borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 }]}>
-              <View style={styles.brainTop}>
-                <Bounce distance={3}>
-                  <Text style={{ fontSize: 40 }}>🧠</Text>
-                </Bounce>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.brainKicker}>NUDGE'S BRAIN</Text>
-                  <Text style={styles.brainTitle}>I teach myself to teach you</Text>
-                </View>
-                <Icon name="chevron-right" size={28} color="rgba(255,255,255,0.7)" />
-              </View>
-              <View style={styles.brainStats}>
-                <BrainStat n={brain?.skills.length ?? 0} label="skills" />
-                <BrainStat n={brain?.recipes.length ?? 0} label="visuals" />
-                <BrainStat n={brain?.changes.length ?? 0} label="upgrades" />
-              </View>
-              {latest && (
-                <View style={styles.latest}>
-                  <Icon name="creation" size={16} color={colors.yellow} />
-                  <Text style={styles.latestText} numberOfLines={2}>
-                    Latest: {latest.title}
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={styles.courseKicker}>MY COURSE</Text>
+                  <Text style={styles.courseTitle} numberOfLines={1}>
+                    {curriculum.title}
+                  </Text>
+                  <ProgressBar value={lessons.length ? mastered / lessons.length : 0} color={colors.green} style={{ height: 10 }} />
+                  <Text style={styles.courseSub}>
+                    {mastered} of {lessons.length} lessons mastered
                   </Text>
                 </View>
-              )}
-            </View>
-          )}
-        </Pressable>
+                <Icon name="chevron-right" size={28} color={colors.trackText} />
+              </View>
+            )}
+          </Pressable>
+        )}
+        {err && <Text style={styles.err}>{err}</Text>}
+        {sessionError && <ErrorBox message={sessionError} onRetry={onRetrySession} />}
+      </ScrollView>
 
-        <Pressable onPress={onUpload} style={styles.parent} accessibilityRole="button">
-          <Text style={{ fontSize: 26 }}>📚</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.parentText}>Add a textbook chapter</Text>
-            <Text style={styles.parentSub}>For parents & teachers — Nudge will teach the same way</Text>
-          </View>
-          <Icon name="chevron-right" size={24} color={colors.trackText} />
-        </Pressable>
-
-        {/* Grown-up / demo tools stay out of the child's way until asked for. */}
-        <Pressable onPress={() => setMore((m) => !m)} hitSlop={10} style={{ alignSelf: 'center' }} accessibilityRole="button">
-          <Text style={styles.link}>{more ? 'Less ▲' : 'More ▼'}</Text>
-        </Pressable>
-        {more && (
-          <>
-            <View style={styles.links}>
-              <Pressable onPress={onDemo} hitSlop={10}>
-                <Text style={styles.link}>All visuals</Text>
+      <View style={styles.bottom}>
+        <Text style={styles.upNext} numberOfLines={1}>
+          Up next: <Text style={styles.upNextStrong}>{busy ? 'getting ready…' : upNext.label}</Text>
+        </Text>
+        <BigButton label={busy ? 'Getting ready…' : 'Continue'} onPress={upNext.onPress} disabled={busy} />
+        <BigButton label="Snap new homework" icon="📸" onPress={onSnap} variant="outline" color={colors.primary} />
+        <BigButton label="Add new material" icon="📚" onPress={onUpload} variant="outline" color={colors.blue} />
+        <View style={styles.links}>
+          {curriculum && (
+            <>
+              <Pressable onPress={onCurriculum} hitSlop={10}>
+                <Text style={styles.link}>Courses</Text>
               </Pressable>
               <Text style={styles.dot}>·</Text>
-              <Pressable onPress={onRedoIntro} hitSlop={10}>
-                <Text style={styles.link}>Redo intro</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.server}>{API_URL}</Text>
-          </>
-        )}
-      </ScrollView>
+            </>
+          )}
+          <Pressable onPress={pickExample} hitSlop={10}>
+            <Text style={styles.link}>Examples</Text>
+          </Pressable>
+          <Text style={styles.dot}>·</Text>
+          <Pressable onPress={onDemo} hitSlop={10}>
+            <Text style={styles.link}>Visuals</Text>
+          </Pressable>
+          <Text style={styles.dot}>·</Text>
+          <Pressable onPress={onRedoIntro} hitSlop={10}>
+            <Text style={styles.link}>Redo intro</Text>
+          </Pressable>
+        </View>
+      </View>
     </View>
   );
 }
@@ -243,60 +176,23 @@ function score(e: Example, likes: string[]): number {
   return likes.some((l) => hay.includes(l.replace(/s$/, ''))) ? 1 : 0;
 }
 
-function BrainStat({ n, label }: { n: number; label: string }) {
-  return (
-    <View style={styles.brainStat}>
-      <Text style={styles.brainStatNum}>{n}</Text>
-      <Text style={styles.brainStatLabel}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 18,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderBottomWidth: 2,
-    borderBottomColor: colors.line,
-  },
-  brainBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 2, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  brainBtnText: { fontFamily: ff.black, fontSize: 12, color: colors.purple, letterSpacing: 0.8 },
-  scroll: { padding: 16, gap: 18, paddingBottom: 40 },
+  statsRow: { flexDirection: 'row', alignItems: 'center', gap: 18, paddingHorizontal: 20, paddingVertical: 10 },
+  brainBtn: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
+  scroll: { flexGrow: 1, justifyContent: 'center', padding: 20, gap: 14 },
   hero: { alignItems: 'center', gap: 6 },
   hi: { fontSize: font.big - 2, lineHeight: 28, textAlign: 'center' },
   strong: { fontFamily: ff.black, color: colors.primary },
-  sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  h2: { fontFamily: ff.display, fontSize: 22, color: colors.ink },
-  exRow: { gap: 10, paddingVertical: 4, paddingRight: 8 },
-  exCard: { width: 130, height: 150, borderRadius: 20, padding: 12, justifyContent: 'space-between', borderBottomColor: 'rgba(0,0,0,0.12)' },
-  exEmoji: { fontSize: 46 },
-  exTitle: { fontFamily: ff.black, fontSize: 15, color: colors.ink, lineHeight: 19 },
-  exTopic: { fontFamily: ff.black, fontSize: 10, letterSpacing: 0.8 },
-  brainCard: { backgroundColor: '#3B2A6B', borderBottomColor: '#24183F', borderRadius: 22, padding: 16, gap: 12 },
-  brainTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  brainKicker: { fontFamily: ff.black, fontSize: 12, letterSpacing: 1, color: colors.yellow },
-  brainTitle: { fontFamily: ff.display, fontSize: 20, color: '#fff' },
-  brainStats: { flexDirection: 'row', gap: 8 },
-  brainStat: { flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, paddingVertical: 8, alignItems: 'center' },
-  brainStatNum: { fontFamily: ff.display, fontSize: 24, color: '#fff' },
-  brainStatLabel: { fontFamily: ff.bold, fontSize: 12, color: 'rgba(255,255,255,0.75)' },
-  latest: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,201,60,0.15)', borderRadius: 10, padding: 8 },
-  latestText: { flex: 1, fontFamily: ff.bold, fontSize: 13, color: '#FFE8A8' },
-  warm: { backgroundColor: '#FFF1EA', borderWidth: 2, borderColor: '#FFC2A8', borderRadius: 20, padding: 14, gap: 10 },
-  today: { borderWidth: 2, borderColor: '#BDEBD1', backgroundColor: colors.greenLight, borderRadius: 20, padding: 14, gap: 10 },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  kicker: { fontFamily: ff.black, fontSize: 12, letterSpacing: 1 },
-  cardText: { fontFamily: ff.bold, fontSize: 15, color: colors.ink, lineHeight: 21 },
-  lessonTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.ink },
-  err: { fontFamily: ff.bold, color: colors.red, fontSize: 13 },
-  parent: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.lineDark, borderRadius: 18, padding: 12 },
-  parentText: { fontFamily: ff.black, fontSize: font.body - 1, color: colors.ink },
-  parentSub: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft },
-  links: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 8 },
-  link: { color: colors.blue, fontSize: font.small, fontFamily: ff.bold },
-  dot: { color: colors.inkSoft },
-  server: { color: colors.trackText, fontSize: 12, textAlign: 'center', fontFamily: ff.regular },
+  course: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 2, borderColor: colors.line, borderRadius: 18, padding: 12 },
+  courseIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: colors.greenLight, alignItems: 'center', justifyContent: 'center' },
+  courseKicker: { fontFamily: ff.black, fontSize: 11, letterSpacing: 1, color: colors.greenDark },
+  courseTitle: { fontFamily: ff.black, fontSize: font.body - 1, color: colors.ink },
+  courseSub: { fontFamily: ff.bold, fontSize: 12, color: colors.inkSoft },
+  upNext: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft, textAlign: 'center' },
+  upNextStrong: { fontFamily: ff.black, color: colors.ink },
+  err: { fontFamily: ff.bold, color: colors.red, fontSize: 13, textAlign: 'center' },
+  bottom: { paddingHorizontal: 16, paddingBottom: 18, gap: 8 },
+  links: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 4 },
+  link: { color: colors.inkSoft, fontSize: 14, fontFamily: ff.bold },
+  dot: { color: colors.trackText },
 });

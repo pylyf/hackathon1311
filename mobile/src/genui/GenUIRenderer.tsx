@@ -87,7 +87,6 @@ export function GenUIRenderer({ spec, onEvent: onEventProp, onSay, maxWidth = 56
   const interactive = !readOnly && INTERACTIVE.has(spec.type) && (!('interactive' in spec) || spec.interactive);
   return (
     <Animated.View style={[styles.wrap, anim]}>
-      <Text style={styles.kicker}>{interactive ? '👆 TRY IT!' : "✏️ LET'S DRAW IT"}</Text>
       <BlockWithCaption key={key} spec={spec} width={width} onEvent={onEvent} />
     </Animated.View>
   );
@@ -112,7 +111,7 @@ function ScenePlayer({ scene, width, onEvent, onSay }: { scene: SceneSpec; width
     <View style={{ gap: 14 }}>
       <View style={styles.sceneHead}>
         <Text style={styles.sceneTitle} numberOfLines={1}>
-          🎬 {scene.title ?? "Let's see!"}
+          {scene.title ?? "Let's see!"}
         </Text>
         <View style={styles.dots}>
           {scene.steps.map((_, k) => (
@@ -151,7 +150,7 @@ function ScenePlayer({ scene, width, onEvent, onSay }: { scene: SceneSpec; width
           <Pressable onPress={() => setI((x) => (last ? 0 : x + 1))} style={{ flex: 1 }}>
             {({ pressed }) => (
               <View style={[styles.next, last && styles.nextLast, { borderBottomWidth: pressed ? 2 : 5, marginTop: pressed ? 3 : 0 }]}>
-                <Text style={styles.nextText}>{last ? '↺ WATCH AGAIN' : `NEXT  ▶   ${i + 1}/${scene.steps.length}`}</Text>
+                <Text style={styles.nextText}>{last ? '↺ AGAIN' : 'NEXT ▶'}</Text>
               </View>
             )}
           </Pressable>

@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { api, errMsg } from '../api';
 import type { BrainChange, BrainResponse, Curriculum, HintStyle, LearnedResponse, MemoryNote, SessionEndResponse, Skill, Topic } from '../contract';
-import { TracePanel } from '../trace';
 import { Icon, TOPIC } from '../game';
 import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { colors, ff, font } from '../theme';
@@ -60,7 +59,6 @@ function PlanCard({ plan, curriculum }: { plan: Plan; curriculum: Curriculum | n
           {plan.warmup.message}
         </Text>
       )}
-      <TracePanel steps={plan.trace} title="🧠 How Nudge planned this" />
     </View>
   );
 }

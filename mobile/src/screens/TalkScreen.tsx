@@ -8,8 +8,8 @@ import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { recordingToBase64, speakReply, stopSpeaking } from '../audio';
 import { colors, ff, font } from '../theme';
 import { Bounce, Icon, Pop } from '../game';
+import { Reward } from '../reward';
 import { BigButton, BottomBar, BubbleText, ErrorBox, Mascot, Pill, SpeechBubble, TopBar, type Mood } from '../ui';
-import { TracePanel } from '../trace';
 
 const UI_DEBOUNCE_MS = 1200;
 const IDLE_MS = 20000;
@@ -48,6 +48,7 @@ export default function TalkScreen({
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [solved, setSolved] = useState(false);
+  const [reward, setReward] = useState<{ kind: 'step' | 'solved'; id: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [finishing, setFinishing] = useState(false);
@@ -127,6 +128,9 @@ export default function TalkScreen({
         if (res.transcript && !extra.uiEvent) setTranscript(res.transcript);
         applyReply(res.reply);
         if (res.solved) setSolved(true);
+        // celebrate: a small burst for a correct step, a big one for the answer
+        if (res.solved) setReward({ kind: 'solved', id: Date.now() });
+        else if (res.progress) setReward({ kind: 'step', id: Date.now() });
         setTimeout(toAnswer, 120);
       } catch (e) {
         setError(errMsg(e));
@@ -287,22 +291,17 @@ export default function TalkScreen({
   return (
     <View style={{ flex: 1 }}>
       <TopBar
-        title={hint ? '' : "Let's think!"}
+        title=""
         onBack={onBack}
         right={
-          <View style={styles.topRight}>
-            {hint ? <Pill label={`HINT ${hint.level} · ${hint.style.replace('-', ' ').toUpperCase()}`} color={STYLE_COLORS[hint.style] ?? colors.blue} /> : null}
-            <View style={styles.pot}>
-              <Text style={styles.potText}>🪨 +{potential}</Text>
-            </View>
+          <View style={styles.pot}>
+            <Text style={styles.potText}>🪨 +{potential}</Text>
           </View>
         }
       />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.problem}>
-          <Text style={styles.problemLabel}>
-            {lessonId ? 'PRACTICE' : 'YOUR PROBLEM'} · {problem.topic.toUpperCase()}
-          </Text>
+          <Text style={styles.problemLabel}>{lessonId ? 'PRACTICE' : 'YOUR PROBLEM'}</Text>
           <Text style={styles.problemText}>{problem.text}</Text>
         </View>
 
@@ -336,23 +335,14 @@ export default function TalkScreen({
           <Pop>
             <Pressable onPress={showMe}>
               {({ pressed }) => (
-                <View style={[styles.showMe, { borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 }]}>
-                  <Bounce distance={4}>
-                    <Text style={{ fontSize: 34 }}>🎬</Text>
-                  </Bounce>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.showMeTitle}>SHOW ME HOW</Text>
-                    <Text style={styles.showMeSub}>Nudge made a little movie for this problem</Text>
-                  </View>
-                  <Icon name="play-circle" size={36} color="#fff" />
+                <View style={[styles.showMe, { borderBottomWidth: pressed ? 2 : 5, marginTop: pressed ? 3 : 0 }]}>
+                  <Text style={{ fontSize: 22 }}>🎬</Text>
+                  <Text style={styles.showMeTitle}>SHOW ME HOW</Text>
                 </View>
               )}
             </Pressable>
           </Pop>
         )}
-
-        {/* How the agent got there: for curious kids, parents and the demo. Below the lesson, never above it. */}
-        <TracePanel steps={reply.trace} runId={replyCount} />
 
         {error && <ErrorBox message={error} onRetry={lastReq.current ? () => sendTurn(lastReq.current!) : undefined} />}
       </ScrollView>
@@ -444,6 +434,7 @@ export default function TalkScreen({
           </View>
         </BottomBar>
       )}
+      {reward && <Reward key={reward.id} kind={reward.kind} onDone={() => setReward(null)} />}
     </View>
   );
 }
@@ -516,13 +507,16 @@ const styles = StyleSheet.create({
   showMe: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'center',
+    gap: 8,
+    alignSelf: 'center',
     backgroundColor: colors.purple,
     borderBottomColor: colors.purpleDark,
-    borderRadius: 20,
-    padding: 14,
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
   },
-  showMeTitle: { fontFamily: ff.black, color: '#fff', fontSize: 17, letterSpacing: 1 },
+  showMeTitle: { fontFamily: ff.black, color: '#fff', fontSize: 15, letterSpacing: 1 },
   showMeSub: { fontFamily: ff.bold, color: 'rgba(255,255,255,0.85)', fontSize: 13 },
   nudge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.yellowLight, borderRadius: 14, padding: 6, borderWidth: 2, borderColor: '#FFE08A' },
   nudgeText: { flex: 1, fontFamily: ff.black, fontSize: 14, color: colors.ink },
@@ -537,7 +531,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   problemLabel: { fontFamily: ff.black, fontSize: 12, color: colors.yellowDark, letterSpacing: 1, marginBottom: 6 },
-  problemText: { fontFamily: ff.bold, fontSize: font.body + 1, color: colors.ink, lineHeight: 28 },
+  problemText: { fontFamily: ff.bold, fontSize: font.body, color: colors.ink, lineHeight: 25 },
   tutorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginLeft: -6 },
   tutorText: { fontFamily: ff.regular, fontSize: font.body + 1, lineHeight: 27, color: colors.ink },
   replayBtn: { marginTop: 8, alignSelf: 'flex-start' },

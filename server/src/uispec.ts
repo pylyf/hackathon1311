@@ -134,10 +134,10 @@ function parseBlock(v: unknown): BlockSpec | null {
 function parseScene(v: Record<string, unknown>): SceneSpec | null {
   const steps = Array.isArray(v.steps) ? v.steps : [];
   const out: SceneSpec['steps'] = [];
-  for (const st of steps.slice(0, 5)) {
+  for (const st of steps.slice(0, 3)) {
     if (!st || typeof st !== 'object') continue;
     const s = st as { say?: unknown; blocks?: unknown };
-    const blocks = (Array.isArray(s.blocks) ? s.blocks : []).map(parseBlock).filter((b): b is BlockSpec => !!b).slice(0, 3);
+    const blocks = (Array.isArray(s.blocks) ? s.blocks : []).map(parseBlock).filter((b): b is BlockSpec => !!b).slice(0, 2);
     const say = typeof s.say === 'string' ? s.say.slice(0, 160) : undefined;
     if (blocks.length || say) out.push({ say, blocks });
   }
@@ -162,7 +162,7 @@ export function validateScene(input: unknown): SceneSpec | null {
 }
 
 export const UI_SPEC_DOC = `VISUALS. Prefer a "Scene": a short animated explanation whose steps appear one at a time, each with a spoken line and 1-2 blocks:
-{ "type":"Scene", "title"?:string, "steps":[ { "say"?: "one short sentence", "blocks":[ BLOCK, ... ] }, ... ] }  (1-5 steps; build the idea up step by step: situation -> what changes -> question)
+{ "type":"Scene", "title"?:string, "steps":[ { "say"?: "one short sentence", "blocks":[ BLOCK ] }, ... ] }  (2-3 steps, ONE block per step; build the idea up: situation -> what changes -> question)
 A single BLOCK may also be sent on its own. BLOCK types:
 - FractionPie { "type":"FractionPie", "pies":[{"parts":int,"shaded":int,"label"?:string}], "interactive":bool } — pizza/cake circles; child can tap slices.
 - FractionBars { "type":"FractionBars", "rows":[{"denominator":int,"shaded":int,"label"?:string}], "interactive":bool } — chocolate-bar strips; compare fractions.
@@ -180,4 +180,6 @@ A single BLOCK may also be sent on its own. BLOCK types:
 - Choice { "type":"Choice", "question":string, "options":[2-4 short strings] } — a quick tap-to-answer check of ONE small step (never the final answer as the only sensible option).
 - Slider { "type":"Slider", "min":number, "max":number, "step":number, "unit"?:string, "emoji"?:string, "caption"?:string } — child estimates/chooses a number by dragging.
 - Callout { "type":"Callout", "emoji":"💡", "text":"one short idea", "tone"?:"idea"|"tip"|"wow"|"remember" } — explain the key idea in kid words.
-Every block except Choice/Callout takes an optional "caption" (short). Use concrete objects (emoji counters, pizzas) before abstract ones (equations). Never show the final result.`;
+Every block except Choice/Callout takes an optional "caption" (short). Use concrete objects (emoji counters, pizzas) before abstract ones (equations). Show the numbers given in the story clearly (labels like "36 stickers", not "start"). Never show the final result.
+COLOURS: the app picks the colours. Shaded parts are ORANGE in the 1st row/pie/group, BLUE in the 2nd, GREEN in the 3rd, PURPLE in the 4th; empty parts are light grey. If you mention a colour, use exactly these; otherwise just say "coloured" or "shaded".
+KEEP IT SHORT: every "say", caption and label is at most ~10 words. Labels are 1-2 words (e.g. "Tom", "1/2").`;

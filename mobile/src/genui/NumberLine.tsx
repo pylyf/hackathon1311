@@ -1,21 +1,33 @@
+// Number line: a thick rounded track with hops drawn as arcs; tap a number to drop a pin.
 import React, { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import Svg, { Circle, Line, Path, Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import type { NumberLineSpec } from '../contract';
 import { colors, fmt } from '../theme';
-import { SVG_FONT, type GenUIProps } from './types';
+import { SVG_FONT, VIS, type GenUIProps } from './types';
 
-const PAD = 26;
-const LINE_Y = 120;
-const HEIGHT = 190;
+const PAD = 22;
+const LINE_Y = 118;
+const HEIGHT = 178;
+
+/** Rounded label pill drawn inside the SVG. */
+function SvgPill({ x, y, text, fill }: { x: number; y: number; text: string; fill: string }) {
+  const w = Math.max(30, text.length * 9 + 16);
+  return (
+    <G>
+      <Rect x={x - w / 2} y={y - 13} width={w} height={24} rx={12} fill={fill} />
+      <SvgText fontFamily={SVG_FONT} x={x} y={y + 4} fontSize={14} fill="#fff" textAnchor="middle">
+        {text}
+      </SvgText>
+    </G>
+  );
+}
 
 export default function NumberLine({ spec, width, onEvent }: GenUIProps<NumberLineSpec>) {
   const [marker, setMarker] = useState<number | null>(null);
-
   const { min, max } = spec.max > spec.min ? spec : { min: 0, max: 10 };
   const ticks = useMemo(() => {
     let step = spec.step > 0 ? spec.step : 1;
-    // keep it readable: at most 40 ticks
     while ((max - min) / step > 40) step *= 2;
     const out: number[] = [];
     for (let i = 0; min + i * step <= max + 1e-9; i++) out.push(parseFloat((min + i * step).toFixed(6)));
@@ -23,8 +35,8 @@ export default function NumberLine({ spec, width, onEvent }: GenUIProps<NumberLi
   }, [min, max, spec.step]);
 
   const x = (v: number) => PAD + ((v - min) / (max - min)) * (width - 2 * PAD);
-  const labelEvery = Math.ceil(ticks.length / 12);
-  const tickSpacing = ticks.length > 1 ? x(ticks[1]) - x(ticks[0]) : width;
+  const labelEvery = Math.ceil(ticks.length / 11);
+  const spacing = ticks.length > 1 ? x(ticks[1]) - x(ticks[0]) : width;
 
   const place = (v: number) => {
     setMarker(v);
@@ -34,76 +46,58 @@ export default function NumberLine({ spec, width, onEvent }: GenUIProps<NumberLi
   return (
     <View style={{ width, height: HEIGHT }}>
       <Svg width={width} height={HEIGHT}>
-        {/* jumps */}
-        {(spec.jumps ?? []).map((j, i) => {
-          const x1 = x(j.from);
-          const x2 = x(j.to);
-          const h = Math.min(70, 24 + Math.abs(x2 - x1) * 0.35);
-          const mx = (x1 + x2) / 2;
-          const cy = LINE_Y - h * 2;
-          const dir = x2 >= x1 ? 1 : -1;
-          // arrow head at (x2, LINE_Y - 4)
-          const ax = x2;
-          const ay = LINE_Y - 4;
+        {/* track */}
+        <Rect x={PAD - 10} y={LINE_Y - 5} width={width - 2 * PAD + 20} height={10} rx={5} fill={VIS.empty} />
+        {ticks.map((t, i) => {
+          const major = i % labelEvery === 0;
           return (
-            <React.Fragment key={`j${i}`}>
-              <Path
-                d={`M ${x1} ${LINE_Y - 4} Q ${mx} ${cy} ${x2} ${LINE_Y - 4}`}
-                stroke={colors.primary}
-                strokeWidth={3.5}
-                fill="none"
-              />
-              <Polygon
-                points={`${ax},${ay} ${ax - dir * 11},${ay - 9} ${ax - dir * 2},${ay - 14}`}
-                fill={colors.primary}
-              />
-              {j.label ? (
-                <SvgText fontFamily={SVG_FONT} x={mx} y={LINE_Y - h - 6} fontSize={17} fontWeight="bold" fill={colors.primaryDark} textAnchor="middle">
-                  {j.label}
+            <G key={`t${i}`}>
+              <Rect x={x(t) - 1.5} y={LINE_Y - (major ? 11 : 7)} width={3} height={major ? 22 : 14} rx={1.5} fill={major ? '#BDBDBD' : VIS.line} />
+              {major && (
+                <SvgText fontFamily={SVG_FONT} x={x(t)} y={LINE_Y + 34} fontSize={15} fill={colors.ink} textAnchor="middle">
+                  {fmt(t)}
                 </SvgText>
-              ) : null}
-            </React.Fragment>
+              )}
+            </G>
           );
         })}
 
-        {/* main line */}
-        <Line x1={PAD - 12} y1={LINE_Y} x2={width - PAD + 12} y2={LINE_Y} stroke={colors.ink} strokeWidth={3} />
-        {ticks.map((t, i) => (
-          <React.Fragment key={`t${i}`}>
-            <Line x1={x(t)} y1={LINE_Y - 10} x2={x(t)} y2={LINE_Y + 10} stroke={colors.ink} strokeWidth={i % labelEvery === 0 ? 3 : 1.5} />
-            {i % labelEvery === 0 && (
-              <SvgText fontFamily={SVG_FONT} x={x(t)} y={LINE_Y + 32} fontSize={16} fill={colors.ink} textAnchor="middle" fontWeight="bold">
-                {fmt(t)}
-              </SvgText>
-            )}
-          </React.Fragment>
-        ))}
+        {/* hops */}
+        {(spec.jumps ?? []).map((j, i) => {
+          const c = VIS.series[i % VIS.series.length];
+          const x1 = x(j.from);
+          const x2 = x(j.to);
+          const h = Math.min(66, 22 + Math.abs(x2 - x1) * 0.35);
+          const mx = (x1 + x2) / 2;
+          return (
+            <G key={`j${i}`}>
+              <Path d={`M ${x1} ${LINE_Y - 8} Q ${mx} ${LINE_Y - 8 - h * 2} ${x2} ${LINE_Y - 8}`} stroke={c.fill} strokeWidth={4} strokeLinecap="round" fill="none" />
+              <Circle cx={x2} cy={LINE_Y - 8} r={5} fill={c.fill} />
+              {j.label ? <SvgPill x={mx} y={LINE_Y - 8 - h - 6} text={j.label} fill={c.fill} /> : null}
+            </G>
+          );
+        })}
 
         {/* marks */}
         {(spec.marks ?? []).map((m, i) => (
-          <React.Fragment key={`m${i}`}>
-            <Circle cx={x(m.value)} cy={LINE_Y} r={9} fill={colors.purple} stroke="#fff" strokeWidth={2} />
+          <G key={`m${i}`}>
+            <Circle cx={x(m.value)} cy={LINE_Y} r={10} fill={colors.purple} stroke="#fff" strokeWidth={3} />
             {m.label ? (
-              <SvgText fontFamily={SVG_FONT} x={x(m.value)} y={LINE_Y + 54} fontSize={15} fontWeight="bold" fill={colors.purple} textAnchor="middle">
+              <SvgText fontFamily={SVG_FONT} x={x(m.value)} y={LINE_Y + 56} fontSize={13} fill={colors.purple} textAnchor="middle">
                 {m.label}
               </SvgText>
             ) : null}
-          </React.Fragment>
+          </G>
         ))}
 
-        {/* child's marker */}
+        {/* the child's pin */}
         {marker !== null && (
-          <>
-            <Polygon
-              points={`${x(marker)},${LINE_Y - 2} ${x(marker) - 13},${LINE_Y - 26} ${x(marker) + 13},${LINE_Y - 26}`}
-              fill={colors.green}
-              stroke="#fff"
-              strokeWidth={2}
-            />
-            <SvgText fontFamily={SVG_FONT} x={x(marker)} y={LINE_Y - 32} fontSize={20} fontWeight="bold" fill={colors.green} textAnchor="middle">
+          <G>
+            <Path d={`M ${x(marker)} ${LINE_Y - 6} l -12 -18 a 14 14 0 1 1 24 0 z`} fill={colors.green} />
+            <SvgText fontFamily={SVG_FONT} x={x(marker)} y={LINE_Y - 29} fontSize={12} fill="#fff" textAnchor="middle">
               {fmt(marker)}
             </SvgText>
-          </>
+          </G>
         )}
       </Svg>
       {spec.interactive &&
@@ -111,14 +105,8 @@ export default function NumberLine({ spec, width, onEvent }: GenUIProps<NumberLi
           <Pressable
             key={`p${i}`}
             onPress={() => place(t)}
-            accessibilityLabel={`Put marker at ${fmt(t)}`}
-            style={{
-              position: 'absolute',
-              left: x(t) - Math.max(10, tickSpacing / 2),
-              width: Math.max(20, tickSpacing),
-              top: LINE_Y - 34,
-              height: 68,
-            }}
+            accessibilityLabel={`Put a pin at ${fmt(t)}`}
+            style={{ position: 'absolute', left: x(t) - Math.max(10, spacing / 2), width: Math.max(20, spacing), top: LINE_Y - 34, height: 74 }}
           />
         ))}
     </View>

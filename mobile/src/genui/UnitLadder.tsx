@@ -1,24 +1,18 @@
+// Unit ladder: a staircase of units; going down multiplies, going up divides. Buttons move the value.
 import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
-import Svg, { Rect, Text as SvgText } from 'react-native-svg';
+import { StyleSheet, Text, View } from 'react-native';
 import type { UnitLadderSpec } from '../contract';
-import { colors, fmt } from '../theme';
+import { colors, ff, fmt } from '../theme';
 import { BigButton } from '../ui';
-import { SVG_FONT, type GenUIProps } from './types';
-
-const STEP_H = 50;
-const STEP_GAP = 22;
-const STEP_W = 128;
+import { VIS, type GenUIProps } from './types';
 
 export default function UnitLadder({ spec, width, onEvent }: GenUIProps<UnitLadderSpec>) {
   const units = spec.units.length ? spec.units : ['?'];
   const startIdx = Math.max(0, spec.fromUnit ? units.indexOf(spec.fromUnit) : 0);
   const [idx, setIdx] = useState(startIdx);
   const [value, setValue] = useState<number | null>(typeof spec.value === 'number' ? spec.value : null);
-
   const n = units.length;
-  const stepX = n > 1 ? Math.min(80, (width - STEP_W - 8) / (n - 1)) : 0;
-  const height = n * STEP_H + (n - 1) * STEP_GAP + 4;
+  const shift = n > 1 ? Math.min(56, (width - 150) / (n - 1)) : 0;
 
   const move = (dir: -1 | 1) => {
     const to = idx + dir;
@@ -35,46 +29,30 @@ export default function UnitLadder({ spec, width, onEvent }: GenUIProps<UnitLadd
   };
 
   return (
-    <View style={{ width, alignItems: 'center' }}>
-      <Svg width={width} height={height}>
+    <View style={{ width, gap: 12 }}>
+      <View style={{ gap: 0 }}>
         {units.map((u, i) => {
-          const x = 4 + i * stepX;
-          const y = 2 + i * (STEP_H + STEP_GAP);
           const active = i === idx;
           const f = spec.factors[i];
           return (
-            <React.Fragment key={i}>
-              <Rect
-                x={x}
-                y={y}
-                width={STEP_W}
-                height={STEP_H}
-                rx={12}
-                fill={active ? colors.yellow : '#FFFFFF'}
-                stroke={colors.ink}
-                strokeWidth={active ? 3.5 : 2}
-              />
-              <SvgText fontFamily={SVG_FONT} x={x + STEP_W / 2} y={y + STEP_H / 2 + 7} fontSize={active && value !== null ? 18 : 22} fontWeight="bold" fill={colors.ink} textAnchor="middle">
-                {active && value !== null ? `${fmt(value)} ${u}` : u}
-              </SvgText>
+            <View key={i}>
+              <View style={[styles.step, { marginLeft: i * shift }, active ? styles.stepOn : null]}>
+                <Text style={[styles.unit, active && { color: '#fff' }]}>{active && value !== null ? `${fmt(value)} ${u}` : u}</Text>
+              </View>
               {i < n - 1 && typeof f === 'number' && (
-                <>
-                  <SvgText fontFamily={SVG_FONT} x={x + STEP_W + 8} y={y + STEP_H + STEP_GAP / 2 + 6} fontSize={16} fontWeight="bold" fill={colors.green}>
-                    {`↓ ×${fmt(f)}`}
-                  </SvgText>
-                  <SvgText fontFamily={SVG_FONT} x={x + stepX - 8} y={y + STEP_H + STEP_GAP / 2 + 6} fontSize={16} fontWeight="bold" fill={colors.blue} textAnchor="end">
-                    {stepX > 60 ? `÷${fmt(f)} ↑` : ''}
-                  </SvgText>
-                </>
+                <View style={[styles.between, { marginLeft: i * shift + 22 }]}>
+                  <Text style={[styles.op, { color: colors.green }]}>↓ ×{fmt(f)}</Text>
+                  <Text style={[styles.op, { color: colors.blue }]}>↑ ÷{fmt(f)}</Text>
+                </View>
               )}
-            </React.Fragment>
+            </View>
           );
         })}
-      </Svg>
+      </View>
       {spec.interactive && (
         <View style={styles.row}>
-          <BigButton small label="▲ Bigger unit" onPress={() => move(-1)} disabled={idx === 0} color={colors.blue} />
-          <BigButton small label="▼ Smaller unit" onPress={() => move(1)} disabled={idx === n - 1} color={colors.green} />
+          <BigButton small label="▲ Bigger unit" onPress={() => move(-1)} disabled={idx === 0} variant="outline" color={colors.blue} style={{ flex: 1 }} />
+          <BigButton small label="▼ Smaller unit" onPress={() => move(1)} disabled={idx === n - 1} variant="outline" color={colors.green} style={{ flex: 1 }} />
         </View>
       )}
     </View>
@@ -82,5 +60,20 @@ export default function UnitLadder({ spec, width, onEvent }: GenUIProps<UnitLadd
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', gap: 12, marginTop: 12, flexWrap: 'wrap', justifyContent: 'center' },
+  step: {
+    alignSelf: 'flex-start',
+    minWidth: 120,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: VIS.empty,
+    borderBottomWidth: 4,
+    borderBottomColor: VIS.emptyEdge,
+    alignItems: 'center',
+  },
+  stepOn: { backgroundColor: colors.primary, borderBottomColor: colors.primaryDark },
+  unit: { fontFamily: ff.black, fontSize: 18, color: colors.ink },
+  between: { flexDirection: 'row', gap: 10, paddingVertical: 4 },
+  op: { fontFamily: ff.black, fontSize: 13 },
+  row: { flexDirection: 'row', gap: 10 },
 });

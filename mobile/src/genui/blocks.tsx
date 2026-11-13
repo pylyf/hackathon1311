@@ -17,7 +17,8 @@ import type {
   SliderSpec,
 } from '../contract';
 import { colors, ff, fmt } from '../theme';
-import { SVG_FONT, type GenUIProps } from './types';
+import { FracBadge } from './parts';
+import { SVG_FONT, VIS, type GenUIProps } from './types';
 
 const PIE_COLORS = [colors.yellow, colors.primary, colors.purple, colors.green];
 
@@ -116,24 +117,22 @@ export function FractionPie({ spec, width, onEvent }: GenUIProps<FractionPieSpec
         const count = shaded[pi].filter(Boolean).length;
         return (
           <PopIn key={pi} delay={pi * 180} style={{ alignItems: 'center', gap: 6 }}>
-            <Svg width={size} height={size}>
-              <Circle cx={size / 2} cy={size / 2} r={r + 3} fill="#F4D9A8" />
+            <Svg width={size} height={size + 5}>
+              {/* bottom edge, like the app's chunky buttons */}
+              <Circle cx={size / 2} cy={size / 2 + 5} r={r} fill={VIS.emptyEdge} />
               {shaded[pi].map((on, si) => (
                 <Path
                   key={si}
                   d={slicePath(size / 2, size / 2, r, si, p.parts)}
-                  fill={on ? PIE_COLORS[pi % PIE_COLORS.length] : '#FFFFFF'}
-                  stroke={colors.ink}
-                  strokeWidth={2.5}
+                  fill={on ? VIS.series[pi % VIS.series.length].fill : VIS.empty}
+                  stroke="#fff"
+                  strokeWidth={3}
+                  strokeLinejoin="round"
                   onPress={() => toggle(pi, si)}
                 />
               ))}
             </Svg>
-            <View style={styles.fracBadge}>
-              <Text style={styles.fracNum}>{count}</Text>
-              <View style={styles.fracLine} />
-              <Text style={styles.fracNum}>{p.parts}</Text>
-            </View>
+            <FracBadge n={count} d={p.parts} color={VIS.series[pi % VIS.series.length].fill} />
             {p.label ? <Text style={styles.smallLabel}>{p.label}</Text> : null}
           </PopIn>
         );
@@ -156,8 +155,8 @@ function CounterItem({ emoji, delay, size, n, crossed, onPress }: { emoji: strin
         disabled={!onPress}
       >
         <Animated.View style={[styles.counter, { width: size, height: size, transform: [{ scale }] }]}>
-          <Text style={{ fontSize: size * 0.72, opacity: crossed ? 0.35 : 1 }}>{emoji}</Text>
-          {crossed && <View style={[styles.cross, { width: size * 1.1 }]} />}
+          <Text style={{ fontSize: size * 0.82, opacity: crossed ? 0.25 : 1 }}>{emoji}</Text>
+          {crossed && <View style={[styles.cross, { width: size * 0.9 }]} />}
           {n !== null && (
             <View style={styles.countBadge}>
               <Text style={styles.countBadgeText}>{n}</Text>
@@ -169,49 +168,61 @@ function CounterItem({ emoji, delay, size, n, crossed, onPress }: { emoji: strin
   );
 }
 
+/** Real objects in a tray. More than 10 are laid out in rows of ten, so 36 reads as 3 tens and 6. */
 export function Counters({ spec, width, onEvent }: GenUIProps<CountersSpec>) {
-  const total = spec.groups.reduce((a, g) => a + g.count, 0);
-  const size = total > 30 ? 30 : total > 16 ? 36 : 44;
-  const [order, setOrder] = useState<string[]>([]); // tapped items in order -> numbered
+  const inner = width - 30;
+  const size = Math.max(24, Math.min(40, Math.floor(inner / 10) - 1));
+  const [order, setOrder] = useState<string[]>([]);
   let idx = 0;
   const lastG = spec.groups.length - 1;
   return (
-    <View style={{ width, gap: 12 }}>
-      {spec.groups.map((g, gi) => (
-        <View key={gi} style={styles.group}>
-          {g.label ? <Text style={styles.groupLabel}>{g.label}</Text> : null}
-          <View style={styles.wrap}>
-            {Array.from({ length: g.count }, (_, i) => {
-              const id = `${gi}-${i}`;
-              const pos = order.indexOf(id);
-              const crossed = gi === lastG && !!spec.crossOut && i >= g.count - spec.crossOut;
-              const d = idx++ * 45;
-              return (
-                <CounterItem
-                  key={id}
-                  emoji={g.emoji}
-                  delay={d}
-                  size={size}
-                  n={pos >= 0 ? pos + 1 : null}
-                  crossed={crossed}
-                  onPress={
-                    spec.interactive
-                      ? () => {
-                          const next = pos >= 0 ? order.filter((x) => x !== id) : [...order, id];
-                          setOrder(next);
-                          onEvent?.({ component: 'Counters', action: 'count', data: { counted: next.length } });
-                        }
-                      : undefined
-                  }
-                />
-              );
-            })}
+    <View style={{ width, gap: 10 }}>
+      {spec.groups.map((g, gi) => {
+        const c = VIS.series[gi % VIS.series.length];
+        const crossOut = gi === lastG ? spec.crossOut ?? 0 : 0;
+        const rows: number[][] = [];
+        for (let i = 0; i < g.count; i += 10) rows.push(Array.from({ length: Math.min(10, g.count - i) }, (_, k) => i + k));
+        return (
+          <View key={gi} style={[styles.tray, { backgroundColor: c.soft }]}>
+            <View style={styles.trayHead}>
+              <Text style={[styles.groupLabel, { color: c.edge }]} numberOfLines={1}>
+                {g.label ?? ''}
+              </Text>
+              <View style={[styles.countPill, { backgroundColor: c.fill }]}>
+                <Text style={styles.countPillText}>{crossOut ? `${g.count} − ${crossOut}` : g.count}</Text>
+              </View>
+            </View>
+            {rows.map((row, ri) => (
+              <View key={ri} style={styles.tenRow}>
+                {row.map((i) => {
+                  const id = `${gi}-${i}`;
+                  const pos = order.indexOf(id);
+                  return (
+                    <CounterItem
+                      key={id}
+                      emoji={g.emoji}
+                      delay={Math.min(900, idx++ * 25)}
+                      size={size}
+                      n={pos >= 0 ? pos + 1 : null}
+                      crossed={i >= g.count - crossOut}
+                      onPress={
+                        spec.interactive
+                          ? () => {
+                              const next = pos >= 0 ? order.filter((x) => x !== id) : [...order, id];
+                              setOrder(next);
+                              onEvent?.({ component: 'Counters', action: 'count', data: { counted: next.length } });
+                            }
+                          : undefined
+                      }
+                    />
+                  );
+                })}
+              </View>
+            ))}
           </View>
-        </View>
-      ))}
-      {spec.interactive && (
-        <Text style={styles.counterHint}>{order.length ? `You counted ${order.length}!` : 'Tap each one to count it'}</Text>
-      )}
+        );
+      })}
+      {spec.interactive && <Text style={styles.counterHint}>{order.length ? `You counted ${order.length}!` : 'Tap each one to count it'}</Text>}
     </View>
   );
 }
@@ -361,7 +372,7 @@ export function Ruler({ spec, width, onEvent }: GenUIProps<RulerSpec>) {
           const whole = Number.isInteger(t);
           return (
             <G key={t}>
-              <Line x1={x(t)} y1={20} x2={x(t)} y2={whole ? 44 : 34} stroke={colors.ink} strokeWidth={whole ? 2 : 1} />
+              <Line x1={x(t)} y1={20} x2={x(t)} y2={whole ? 44 : 34} stroke={colors.yellowDark} strokeWidth={whole ? 2.5 : 1.5} strokeLinecap="round" />
               {whole && (
                 <SvgText fontFamily={SVG_FONT} x={x(t)} y={62} fontSize={13} fontWeight="bold" fill={colors.ink} textAnchor="middle">
                   {String(t)}
@@ -626,8 +637,13 @@ const styles = StyleSheet.create({
   fracNum: { fontFamily: ff.black, color: '#fff', fontSize: 16, lineHeight: 19 },
   fracLine: { width: 18, height: 2, backgroundColor: '#fff', borderRadius: 1 },
 
-  group: { gap: 4 },
-  groupLabel: { fontFamily: ff.black, fontSize: 13, color: colors.inkSoft, letterSpacing: 0.5 },
+  tray: { borderRadius: 16, paddingVertical: 10, paddingHorizontal: 6, gap: 4 },
+  trayHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
+  groupLabel: { flex: 1, fontFamily: ff.black, fontSize: 14 },
+  countPill: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 2 },
+  countPillText: { fontFamily: ff.black, color: '#fff', fontSize: 15 },
+  tenRow: { flexDirection: 'row', alignItems: 'center', gap: 1 },
+  tenTag: { position: 'absolute', right: -2, top: -8, fontFamily: ff.black, fontSize: 10 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   counter: { alignItems: 'center', justifyContent: 'center' },
   cross: { position: 'absolute', height: 4, backgroundColor: colors.red, borderRadius: 2, transform: [{ rotate: '-30deg' }] },
@@ -655,7 +671,7 @@ const styles = StyleSheet.create({
   chartBar: { width: '100%', borderTopLeftRadius: 10, borderTopRightRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
   chartQ: { fontFamily: ff.display, fontSize: 28, color: colors.yellowDark },
   chartVal: { fontFamily: ff.black, fontSize: 13, color: colors.ink, marginBottom: 4 },
-  chartAxis: { height: 3, backgroundColor: colors.ink, borderRadius: 2 },
+  chartAxis: { height: 4, backgroundColor: VIS.line, borderRadius: 2 },
   chartLabels: { flexDirection: 'row', justifyContent: 'space-around' },
   chartLabel: { fontFamily: ff.bold, fontSize: 12, color: colors.ink, textAlign: 'center' },
 

@@ -197,7 +197,7 @@ app.post('/turn', route(async (req, res) => {
   const result = await tutorTurn(p, transcript, uiEvent);
   if (result.solved && p.practiceId) markPracticeSolved(p.practiceId);
   persistSessions();
-  const body: TurnResponse = { transcript, reply: result.reply, solved: result.solved };
+  const body: TurnResponse = { transcript, reply: result.reply, solved: result.solved, progress: !!result.progress };
   res.json(body);
 }));
 

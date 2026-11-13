@@ -272,6 +272,7 @@ export interface TurnResponse {
   transcript: string; // what the child said (from STT, or the text sent)
   reply: TutorReply;
   solved: boolean;
+  progress?: boolean; // the child got a step right (not the final answer yet) -> celebrate a little
 }
 
 // POST /session/end

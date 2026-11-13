@@ -1,14 +1,41 @@
-import React, { useState } from 'react';
-import { Pressable, View } from 'react-native';
-import Svg, { Rect, Text as SvgText } from 'react-native-svg';
+// Chocolate-bar strips: equal rounded pieces with small gaps; tap a piece to colour it.
+import React, { useRef, useState } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { FractionBarsSpec } from '../contract';
-import { colors } from '../theme';
-import { SVG_FONT, type GenUIProps } from './types';
+import { colors, ff } from '../theme';
+import { FracBadge } from './parts';
+import { VIS, type GenUIProps } from './types';
 
-const ROW_H = 52;
-const GAP = 18;
-const COUNT_W = 64;
-const ROW_COLORS = [colors.shade, colors.green, colors.purple, colors.primary];
+const ROW_H = 46;
+
+function Piece({ on, color, edge, w, first, last, onPress }: { on: boolean; color: string; edge: string; w: number; first: boolean; last: boolean; onPress?: () => void }) {
+  const s = useRef(new Animated.Value(1)).current;
+  return (
+    <Pressable
+      disabled={!onPress}
+      onPress={() => {
+        s.setValue(0.85);
+        Animated.spring(s, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }).start();
+        onPress?.();
+      }}
+    >
+      <Animated.View
+        style={{
+          width: w,
+          height: ROW_H,
+          backgroundColor: on ? color : VIS.empty,
+          borderBottomWidth: 4,
+          borderBottomColor: on ? edge : VIS.emptyEdge,
+          borderTopLeftRadius: first ? 12 : 4,
+          borderBottomLeftRadius: first ? 12 : 4,
+          borderTopRightRadius: last ? 12 : 4,
+          borderBottomRightRadius: last ? 12 : 4,
+          transform: [{ scale: s }],
+        }}
+      />
+    </Pressable>
+  );
+}
 
 export default function FractionBars({ spec, width, onEvent }: GenUIProps<FractionBarsSpec>) {
   const [cells, setCells] = useState<boolean[][]>(() =>
@@ -17,89 +44,60 @@ export default function FractionBars({ spec, width, onEvent }: GenUIProps<Fracti
       return Array.from({ length: den }, (_, i) => i < r.shaded);
     }),
   );
-
-  const LABEL_W = spec.rows.some((r) => r.label) ? 72 : 6;
-  const barW = Math.max(120, width - LABEL_W - COUNT_W);
-  const height = spec.rows.length * ROW_H + (spec.rows.length - 1) * GAP + 4;
+  const hasLabels = spec.rows.some((r) => r.label);
+  // short labels ("1/2") sit left of the bar; longer ones go above it so they are never cut off
+  const labelsAbove = spec.rows.some((r) => (r.label ?? '').length > 4);
+  const labelW = hasLabels && !labelsAbove ? 54 : 0;
+  const barW = width - labelW - 56;
 
   const toggle = (row: number, idx: number) => {
-    if (!spec.interactive) return;
     const next = cells.map((r) => r.slice());
     next[row][idx] = !next[row][idx];
     setCells(next);
-    onEvent?.({
-      component: 'FractionBars',
-      action: 'shade',
-      data: { row, shaded: next[row].filter(Boolean).length, of: next[row].length },
-    });
+    onEvent?.({ component: 'FractionBars', action: 'shade', data: { row, shaded: next[row].filter(Boolean).length, of: next[row].length } });
   };
 
   return (
-    <View style={{ width, height }}>
-      <Svg width={width} height={height}>
-        {cells.map((row, r) => {
-          const y = 2 + r * (ROW_H + GAP);
-          const segW = barW / row.length;
-          const color = ROW_COLORS[r % ROW_COLORS.length];
-          const count = row.filter(Boolean).length;
-          const label = spec.rows[r].label ?? '';
-          return (
-            <React.Fragment key={r}>
-              <SvgText fontFamily={SVG_FONT}
-                x={LABEL_W - 10}
-                y={y + ROW_H / 2 + 7}
-                fontSize={label.length > 5 ? 14 : 20}
-                fontWeight="bold"
-                fill={colors.ink}
-                textAnchor="end"
-              >
-                {label}
-              </SvgText>
+    <View style={{ width, gap: 14 }}>
+      {cells.map((row, r) => {
+        const c = VIS.series[r % VIS.series.length];
+        const n = row.length;
+        const w = (barW - (n - 1) * VIS.gap) / n;
+        return (
+          <View key={r} style={{ gap: 4 }}>
+            {labelsAbove && spec.rows[r].label ? <Text style={[styles.above, { color: c.edge }]}>{spec.rows[r].label}</Text> : null}
+          <View style={styles.row}>
+            {hasLabels && !labelsAbove && (
+              <Text style={styles.label} numberOfLines={2}>
+                {spec.rows[r].label ?? ''}
+              </Text>
+            )}
+            <View style={[styles.bar, { width: barW, gap: VIS.gap }]}>
               {row.map((on, i) => (
-                <Rect
+                <Piece
                   key={i}
-                  x={LABEL_W + i * segW}
-                  y={y}
-                  width={segW}
-                  height={ROW_H}
-                  fill={on ? color : '#FFFFFF'}
-                  stroke={colors.ink}
-                  strokeWidth={2.5}
+                  on={on}
+                  color={c.fill}
+                  edge={c.edge}
+                  w={w}
+                  first={i === 0}
+                  last={i === n - 1}
+                  onPress={spec.interactive ? () => toggle(r, i) : undefined}
                 />
               ))}
-              <SvgText fontFamily={SVG_FONT}
-                x={LABEL_W + barW + 12}
-                y={y + ROW_H / 2 + 8}
-                fontSize={22}
-                fontWeight="bold"
-                fill={colors.ink}
-              >
-                {`${count}/${row.length}`}
-              </SvgText>
-            </React.Fragment>
-          );
-        })}
-      </Svg>
-      {spec.interactive &&
-        cells.map((row, r) =>
-          row.map((_, i) => {
-            const segW = barW / row.length;
-            return (
-              <Pressable
-                key={`${r}-${i}`}
-                onPress={() => toggle(r, i)}
-                accessibilityLabel={`Row ${r + 1} piece ${i + 1}`}
-                style={{
-                  position: 'absolute',
-                  left: LABEL_W + i * segW,
-                  top: 2 + r * (ROW_H + GAP),
-                  width: segW,
-                  height: ROW_H,
-                }}
-              />
-            );
-          }),
-        )}
+            </View>
+            <FracBadge n={row.filter(Boolean).length} d={n} color={c.fill} />
+          </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  label: { width: 44, fontFamily: ff.black, fontSize: 14, color: colors.ink, textAlign: 'right' },
+  bar: { flexDirection: 'row' },
+  above: { fontFamily: ff.black, fontSize: 14 },
+});
