@@ -62,10 +62,24 @@ export interface NudgeEvent {
   [k: string]: unknown;
 }
 
+type EventListener = (e: NudgeEvent) => void;
+const listeners: EventListener[] = [];
+/** Subscribe to every event right after it is appended to events.jsonl (used by the vector index). */
+export function onEvent(fn: EventListener): void {
+  listeners.push(fn);
+}
+
 export function logEvent(e: Omit<NudgeEvent, 'ts'> & { ts?: string }): void {
   ensureDataDir();
-  const full = { ts: new Date().toISOString(), ...e };
+  const full = { ts: new Date().toISOString(), ...e } as NudgeEvent;
   fs.appendFileSync(FILES.events, JSON.stringify(full) + '\n');
+  for (const fn of listeners) {
+    try {
+      fn(full);
+    } catch (err) {
+      console.warn('[events] listener failed:', (err as Error).message);
+    }
+  }
 }
 
 export function readEvents(): NudgeEvent[] {

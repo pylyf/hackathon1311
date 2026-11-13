@@ -8,7 +8,7 @@ import { adviseStyle, rewardStyle, STYLES } from './bandit.js';
 import { lessonContext, type StoredLesson } from './curriculum.js';
 import { approxEq, checkAnswer, extractNumbers, mentionsAnswerAnywhere, saidCorrectAnswer, textLeaks, uiLeaks } from './guard.js';
 import { createMessage, textOf } from './llm.js';
-import { interests, mergeNotes, recallNotes } from './memory.js';
+import { findSimilarNote, interests, mergeNotes, recallNotesSmart } from './memory.js';
 import { profileLine } from './profile.js';
 import { brainPrompt, markRecipeUsed, peekPreparedScene } from './brain.js';
 import { mockAlreadySolved, mockHint, mockLessonHint, mockPraise } from './mock.js';
@@ -16,6 +16,7 @@ import { evalExpression } from './problem.js';
 import type { ProblemState } from './state.js';
 import { logEvent } from './store.js';
 import { UI_SPEC_DOC, validateUISpec } from './uispec.js';
+import { ago, describeStruggle, similarStruggles, type PastStruggle } from './vector/semantic.js';
 import { synthesize } from './voice.js';
 
 export type Outcome = 'solved' | 'correct_step' | 'wrong' | 'dont_know' | 'just_tell_me' | 'other';
@@ -98,6 +99,31 @@ interface AgentCtx {
   ui: UISpec | null;
   speech: { text: string; style?: string; level?: number; reason?: string } | null;
   checkedCorrect: boolean;
+  past: PastStruggle[]; // similar moments from earlier problems/sessions (vector memory), best first
+}
+
+/**
+ * Long-term memory, by meaning: before the agent thinks, fetch the past moments closest to this one
+ * (same skill + similar problem + similar answer on a turn; similar problem on an intro) with what helped then.
+ * Fast (local embedding + Qdrant, hard timeout) and empty when the vector index is off.
+ */
+async function recallPast(ctx: AgentCtx): Promise<void> {
+  const { p } = ctx;
+  ctx.past = await similarStruggles({
+    problemText: p.text, skill: ctx.lesson?.skill, ...(ctx.mode === 'turn' ? { said: ctx.transcript } : {}), topic: p.topic, excludeProblemId: p.id, limit: 3,
+  });
+  const top = ctx.past[0];
+  if (!top) return;
+  const helped = ctx.past.find((s) => s.followUp?.helped === true)?.followUp;
+  const what = ctx.mode === 'turn' ? (top.outcome === 'wrong' ? 'a similar moment went wrong' : 'stuck at a similar moment') : 'a similar problem was tricky';
+  ctx.trace.push({ kind: 'recall', text: `Long-term memory: ${what} ${ago(top.ts)}${helped ? ` → ${helped.style} hint helped` : ''}` });
+}
+
+function pastBlock(ctx: AgentCtx): string {
+  if (!ctx.past.length) return '';
+  return `\n\nFROM LONG-TERM MEMORY: the moments most similar to this one where this child struggled before (matched by meaning, most similar first):
+${ctx.past.map((s) => `- ${describeStruggle(s)}`).join('\n')}
+Use it: if the same mistake is back, gently name the idea it breaks and prefer the kind of hint that HELPED then; do not repeat a kind that did not help (that is a good reason to override the advised style). Never quote an old answer and never reveal the answer.`;
 }
 
 const TOOLS: Anthropic.Beta.Messages.BetaTool[] = [
@@ -175,13 +201,13 @@ function ensureAdvice(ctx: AgentCtx, claimed?: Assessable): Advice {
   return ctx.advice;
 }
 
-function runTool(ctx: AgentCtx, name: string, input: Record<string, unknown>): { out: string; isError?: boolean } {
+async function runTool(ctx: AgentCtx, name: string, input: Record<string, unknown>): Promise<{ out: string; isError?: boolean }> {
   const { p } = ctx;
   switch (name) {
     case 'recall_memory': {
       const q = String(input.query ?? '');
-      const notes = recallNotes(`${q} ${ctx.lesson?.skill ?? ''}`, p.topic, 4);
-      ctx.trace.push({ kind: 'recall', text: notes.length ? `Recalled: ${short(notes[0].text, 50)}${notes.length > 1 ? ` (+${notes.length - 1})` : ''}` : 'Recalled: nothing yet' });
+      const { notes, semantic } = await recallNotesSmart(`${q} ${ctx.lesson?.skill ?? ''}`, p.topic, 4);
+      ctx.trace.push({ kind: 'recall', text: notes.length ? `Recalled${semantic ? ' by meaning' : ''}: ${short(notes[0].text, 50)}${notes.length > 1 ? ` (+${notes.length - 1})` : ''}` : 'Recalled: nothing yet' });
       return { out: notes.length ? notes.map((n) => `- [${n.kind}, seen ${n.seen}x] ${n.text}`).join('\n') : 'No notes yet.' };
     }
     case 'get_strategy_advice': {
@@ -228,9 +254,11 @@ function runTool(ctx: AgentCtx, name: string, input: Record<string, unknown>): {
       const kind = String(input.kind ?? '') as MemoryNote['kind'];
       const text = String(input.text ?? '').trim();
       if (!text || !['misconception', 'works', 'doesnt-work', 'interest', 'mastered'].includes(kind)) return { out: 'Invalid note.', isError: true };
-      mergeNotes([{ topic: kind === 'interest' ? 'any' : p.topic, kind, text }]);
-      ctx.trace.push({ kind: 'memory', text: `Saved note: ${short(text, 50)}` });
-      return { out: 'Saved.' };
+      const topic = kind === 'interest' ? 'any' : p.topic;
+      const same = await findSimilarNote(text, kind, topic); // already known in other words? confirm it (seen+1) instead of a duplicate
+      mergeNotes([{ id: same?.id ?? null, topic, kind, text: same ? same.text : text }]);
+      ctx.trace.push({ kind: 'memory', text: same ? `Seen again (${same.seen + 1}x): ${short(same.text, 40)}` : `Saved note: ${short(text, 50)}` });
+      return { out: same ? `Already known, counted again: "${same.text}"` : 'Saved.' };
     }
     case 'speak': {
       ctx.speech = {
@@ -310,7 +338,7 @@ async function runAgent(ctx: AgentCtx, task: string): Promise<void> {
     : '';
   const heard = ctx.mode === 'intro' ? '' : `\n\nThe child just said: "${ctx.transcript || '(nothing, only touched the screen)'}"${obs}`;
   const messages: Anthropic.Beta.Messages.BetaMessageParam[] = [
-    { role: 'user', content: `Conversation so far:\n${convo}${heard}\n\nYOUR TASK: ${task}` },
+    { role: 'user', content: `Conversation so far:\n${convo}${heard}${pastBlock(ctx)}\n\nYOUR TASK: ${task}` },
   ];
   const system = systemPrompt(ctx.p, ctx.lesson);
   for (let i = 0; i < MAX_ITER && !ctx.speech; i++) {
@@ -332,7 +360,7 @@ async function runAgent(ctx: AgentCtx, task: string): Promise<void> {
     }
     const results: Anthropic.Beta.Messages.BetaToolResultBlockParam[] = [];
     for (const u of uses) {
-      const r = runTool(ctx, u.name, (u.input ?? {}) as Record<string, unknown>);
+      const r = await runTool(ctx, u.name, (u.input ?? {}) as Record<string, unknown>);
       results.push({ type: 'tool_result', tool_use_id: u.id, content: r.out, ...(r.isError ? { is_error: true } : {}) });
     }
     if (ctx.speech) break; // speak ends the turn, no extra round trip
@@ -373,22 +401,27 @@ function safeTrace(p: ProblemState, trace: TraceStep[]): TraceStep[] {
 
 // ---------------- mock agent (scripted, same tools) ----------------
 
-function mockAgent(ctx: AgentCtx, cls: ReturnType<typeof classify>, warmupMessage?: string): void {
+async function mockAgent(ctx: AgentCtx, cls: ReturnType<typeof classify>, warmupMessage?: string): Promise<void> {
   const { p } = ctx;
-  runTool(ctx, 'recall_memory', { query: ctx.mode === 'intro' ? 'interests' : `${ctx.transcript} mistakes` });
+  await runTool(ctx, 'recall_memory', { query: ctx.mode === 'intro' ? 'interests' : `${ctx.transcript} mistakes` });
   const outcome: Assessable = cls === 'ambiguous_numeric' ? 'wrong' : cls === 'ambiguous' || cls === 'solved' ? 'other' : cls;
-  runTool(ctx, 'get_strategy_advice', { child_outcome: outcome });
+  await runTool(ctx, 'get_strategy_advice', { child_outcome: outcome });
   const a = ctx.advice!;
   if (cls === 'ambiguous_numeric') {
     const ms = extractNumbers(ctx.transcript);
-    if (ms.length) runTool(ctx, 'check_answer', { value: String(Number(ms[ms.length - 1].value.toFixed(4))) });
+    if (ms.length) await runTool(ctx, 'check_answer', { value: String(Number(ms[ms.length - 1].value.toFixed(4))) });
     const mis = addsDenominators(p, ctx.transcript);
-    if (mis) runTool(ctx, 'write_memory', { kind: 'misconception', text: mis });
+    if (mis) await runTool(ctx, 'write_memory', { kind: 'misconception', text: mis });
   }
   const interest = interestKeyword(interests());
   let style = a.style;
   let reason = '';
-  if (style === 'verbal' && interest) {
+  // long-term memory first: the kind of hint that got this child unstuck on a similar moment before
+  const helpedBefore = ctx.mode === 'turn' && outcome !== 'correct_step' && outcome !== 'other' ? ctx.past.find((s) => s.followUp?.helped === true) : undefined;
+  if (helpedBefore?.followUp && helpedBefore.followUp.style !== style) {
+    style = helpedBefore.followUp.style;
+    reason = `a ${style} hint helped at a similar moment ${ago(helpedBefore.ts)}`;
+  } else if (style === 'verbal' && interest) {
     style = 'story';
     reason = `loves ${interest}`;
   }
@@ -402,8 +435,8 @@ function mockAgent(ctx: AgentCtx, cls: ReturnType<typeof classify>, warmupMessag
   } else {
     ({ text, ui } = mockHint({ outcome, level: a.level, style, starterVisual: p.starterVisual, interest }));
   }
-  if (ui) runTool(ctx, 'show_component', { spec: ui });
-  runTool(ctx, 'speak', { text, style, level: a.level, override_reason: reason });
+  if (ui) await runTool(ctx, 'show_component', { spec: ui });
+  await runTool(ctx, 'speak', { text, style, level: a.level, override_reason: reason });
 }
 
 // ---------------- public API ----------------
@@ -457,7 +490,7 @@ async function guardReply(ctx: AgentCtx, text: string, ui: UISpec | null): Promi
 
 /** Intro reply for a photo problem (L1 question from the solver, bandit-picked style). */
 export async function introReply(p: ProblemState, introText: string): Promise<TutorReply> {
-  const ctx: AgentCtx = { p, lesson: null, mode: 'intro', transcript: '', known: null, trace: [], advice: null, ui: null, speech: null, checkedCorrect: false };
+  const ctx: AgentCtx = { p, lesson: null, mode: 'intro', transcript: '', known: null, trace: [], advice: null, ui: null, speech: null, checkedCorrect: false, past: [] };
   ctx.trace.push({ kind: 'read', text: `Read the photo: ${short(p.text, 50)}` });
   ctx.trace.push({ kind: 'verify', text: p.answer.verified ? 'Solved it privately · mathjs agrees' : 'Solved it privately (mathjs could not confirm)' });
   const { style, level } = ensureAdvice(ctx);
@@ -468,12 +501,14 @@ export async function introReply(p: ProblemState, introText: string): Promise<Tu
 }
 
 /** Intro reply for a curriculum practice problem: the agent references the lesson's method. */
-export async function lessonIntro(p: ProblemState, warmupMessage?: string): Promise<TutorReply> {
+export async function lessonIntro(p: ProblemState, warmupMessage?: string, pickedBecause?: string): Promise<TutorReply> {
   const lesson = lessonContext(p.lessonId);
-  const ctx: AgentCtx = { p, lesson, mode: 'intro', transcript: '', known: null, trace: [], advice: null, ui: null, speech: null, checkedCorrect: false };
+  const ctx: AgentCtx = { p, lesson, mode: 'intro', transcript: '', known: null, trace: [], advice: null, ui: null, speech: null, checkedCorrect: false, past: [] };
   if (lesson) ctx.trace.push({ kind: 'read', text: `Lesson "${short(lesson.title, 40)}" (${lesson.sourcePages ?? 'textbook'})` });
   if (warmupMessage) ctx.trace.push({ kind: 'plan', text: 'Warm-up planned after last session' });
-  if (MOCK) mockAgent(ctx, 'ambiguous', warmupMessage);
+  if (pickedBecause) ctx.trace.push({ kind: 'plan', text: pickedBecause });
+  await recallPast(ctx);
+  if (MOCK) await mockAgent(ctx, 'ambiguous', warmupMessage);
   else {
     try {
       await runAgent(ctx, (warmupMessage ? `This is the WARM-UP the planner prepared after last session. Start with this message (you may rephrase it): "${warmupMessage}" Then ` : 'This is a NEW practice problem from the lesson. ') + 'Introduce it in at most 30 words: one short sentence connecting it to what we learned in the lesson (the textbook method, without solving), then ONE easy L1 opening question. Do NOT retell the problem, the child can read it on screen. Call get_strategy_advice (child_outcome "other") and recall_memory first; show the starting situation with show_component if the style is visual.');
@@ -513,9 +548,10 @@ export async function tutorTurn(p: ProblemState, transcript: string, uiEvent?: U
   }
 
   const known: Assessable | null = cls === 'ambiguous' || cls === 'ambiguous_numeric' ? null : cls;
-  const ctx: AgentCtx = { p, lesson, mode: 'turn', transcript, uiEvent, known, trace: [], advice: null, ui: null, speech: null, checkedCorrect: false };
+  const ctx: AgentCtx = { p, lesson, mode: 'turn', transcript, uiEvent, known, trace: [], advice: null, ui: null, speech: null, checkedCorrect: false, past: [] };
   const t0 = Date.now();
-  if (MOCK) mockAgent(ctx, cls);
+  await recallPast(ctx);
+  if (MOCK) await mockAgent(ctx, cls);
   else {
     try {
       await runAgent(ctx, 'Help the child with the next small step.');

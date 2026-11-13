@@ -21,6 +21,8 @@ import { ensureDataDir, logEvent } from './store.js';
 import { flushPendingHints, introReply, lessonIntro, tutorTurn } from './tutor.js';
 import { findLesson, jobStatus, loadCurriculum, markLessonStarted, markPracticeSolved, publicCurriculum, startTextbookJob, type StoredProblem } from './curriculum.js';
 import { planNext } from './planner.js';
+import { pickPractice } from './personalize.js';
+import { resync, searchNotes, similarStruggles, startVectorMemory, vectorReady, vectorStatus } from './vector/semantic.js';
 import { SttUnavailableError, synthesize, transcribe } from './voice.js';
 
 ensureDataDir();
@@ -36,7 +38,7 @@ type Handler = (req: Request, res: Response) => Promise<unknown>;
 const route = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, mock: MOCK, stt: HAS_ELEVEN, tts: HAS_ELEVEN });
+  res.json({ ok: true, mock: MOCK, stt: HAS_ELEVEN, tts: HAS_ELEVEN, memory: vectorReady() ? 'qdrant' : 'keyword' });
 });
 
 app.post('/session/start', route(async (_req, res) => {
@@ -119,6 +121,7 @@ app.post('/lesson/problem', route(async (req, res) => {
   if (!c) throw new HttpError(404, 'No curriculum yet — upload a textbook chapter first');
   let src: StoredProblem | undefined;
   let lid: string;
+  let pickedBecause: string | undefined;
   if (warmup) {
     if (!c.warmup) throw new HttpError(404, 'No warm-up planned yet');
     if (c.warmup.problem.solved) throw new HttpError(410, 'Warm-up already done');
@@ -132,8 +135,11 @@ app.post('/lesson/problem', route(async (req, res) => {
       src = lesson.problems.find((x) => x.id === problemId);
       if (!src) throw new HttpError(404, `Unknown problem ${problemId} in lesson ${lid}`);
     } else {
-      src = lesson.problems.find((x) => !x.solved);
-      if (!src) throw new HttpError(410, 'Lesson done! All practice problems are solved.');
+      // not just the first unsolved one: the one closest to what this child found hard before (vector memory)
+      const pick = await pickPractice(lesson);
+      if (!pick) throw new HttpError(410, 'Lesson done! All practice problems are solved.');
+      src = pick.problem;
+      pickedBecause = pick.because;
     }
   }
   const session = getOrCreateSession(sessionId, CHILD_ID);
@@ -159,7 +165,7 @@ app.post('/lesson/problem', route(async (req, res) => {
   markLessonStarted(lid);
   logEvent({ sessionId, problemId: p.id, type: 'problem', topic: p.topic, text: p.text, verified: p.answer.verified, lessonId: lid, practiceId: src.id, warmup: !!warmup });
   prepareScene(p); // "Show me" explainer, built ahead of time
-  const intro = await lessonIntro(p, warmup ? c.warmup?.message : undefined);
+  const intro = await lessonIntro(p, warmup ? c.warmup?.message : undefined, pickedBecause);
   persistSessions();
   const body: ProblemResponse = { problemId: p.id, lessonId: lid, text: p.text, topic: p.topic, intro };
   res.json(body);
@@ -279,6 +285,36 @@ app.get('/learned', (_req, res) => {
   res.json(body);
 });
 
+// ---------- vector memory (Qdrant): status + a peek at what it would recall ----------
+
+app.get('/vector/status', route(async (_req, res) => {
+  res.json(await vectorStatus());
+}));
+
+// GET /vector/search?q=two+sixths&problem=1/3+%2B+1/3&topic=fractions — what long-term memory returns for a moment
+app.get('/vector/search', route(async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  const problem = String(req.query.problem ?? '').trim();
+  const topic = ['fractions', 'word-problems', 'units'].includes(String(req.query.topic)) ? (String(req.query.topic) as ProblemState['topic']) : undefined;
+  if (!q && !problem) throw new HttpError(400, 'q (what the child said / a query) or problem is required');
+  if (!vectorReady()) throw new HttpError(503, 'Vector memory is not ready (see /vector/status)');
+  const [notes, struggles] = await Promise.all([
+    searchNotes(q || problem, topic ?? null, 5, 3000),
+    similarStruggles({ problemText: problem || q, ...(problem && q ? { said: q } : {}), topic, limit: 5, minScore: 0, timeoutMs: 3000 }),
+  ]);
+  res.json({
+    notes: (notes ?? []).map((h) => ({ score: Number(h.score.toFixed(3)), kind: h.note.kind, topic: h.note.topic, text: h.note.text, seen: h.note.seen })),
+    struggles: struggles.map((s) => ({ ...s, score: Number(s.score.toFixed(3)) })),
+  });
+}));
+
+// Rebuild the index from memory.json + events.jsonl (it also happens on every start).
+app.post('/vector/reindex', route(async (_req, res) => {
+  const r = await resync();
+  if (!r) throw new HttpError(503, 'Vector memory is not ready (see /vector/status)');
+  res.json(r);
+}));
+
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const status = err instanceof HttpError ? err.status : 500;
   const message = err instanceof Error ? err.message : String(err);
@@ -293,5 +329,6 @@ app.listen(PORT, '0.0.0.0', () => {
       ? '  Claude: MOCK mode (no ANTHROPIC_API_KEY or MOCK=1) — canned responses, bandit/memory/events still update'
       : `  Claude: LIVE (solver ${MODEL_SOLVER}, tutor ${MODEL_TUTOR})`,
   );
+  startVectorMemory(); // Qdrant + local embeddings come up in the background; keyword recall until then
   console.log(HAS_ELEVEN ? `  ElevenLabs: LIVE (STT scribe, TTS ${ELEVEN_TTS_MODEL})` : '  ElevenLabs: off (no ELEVENLABS_API_KEY) — STT unavailable (send text), TTS returns null');
 });

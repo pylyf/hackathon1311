@@ -11,3 +11,11 @@ export const MODEL_SOLVER = 'claude-sonnet-5-5'; // problem parsing/solving + se
 export const MODEL_TUTOR = 'claude-sonnet-5-5'; // tutor turns
 
 export const CHILD_ID = 'demo';
+
+// Long-term semantic memory. 'qdrant' (default): memory notes + past mistakes are also indexed in a local Qdrant
+// (standalone binary, no Docker) and recalled by meaning. 'json': keyword recall only, nothing is started.
+// The JSON files stay the source of truth either way; if Qdrant is unavailable the server falls back to keywords.
+export const MEMORY_BACKEND: 'qdrant' | 'json' = /^(json|off|0|false)$/i.test(process.env.MEMORY_BACKEND ?? '') ? 'json' : 'qdrant';
+export const QDRANT_URL = (process.env.QDRANT_URL ?? '').trim().replace(/\/+$/, ''); // set = use this Qdrant instead of the local binary
+export const QDRANT_API_KEY = process.env.QDRANT_API_KEY || undefined;
+export const QDRANT_PORT = Number(process.env.QDRANT_PORT || 6333);

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { MemoryNote, Topic } from './contract.js';
 import { FILES, readJson, writeJson } from './store.js';
+import { indexNotes, searchNotes } from './vector/semantic.js';
 
 export function loadMemory(): MemoryNote[] {
   const m = readJson<MemoryNote[]>(FILES.memory, []);
@@ -64,6 +65,7 @@ export function mergeNotes(updates: NoteUpdate[]): MemoryNote[] {
     touched.set(existing.id, existing);
   }
   saveMemory(notes);
+  indexNotes([...touched.values()]); // mirror into the vector index (no-op when it is off)
   return [...touched.values()];
 }
 
@@ -79,4 +81,24 @@ export function recallNotes(query: string, topic: Topic, limit = 4): MemoryNote[
     .sort((a, b) => b.score - a.score || rank(a.n, b.n))
     .slice(0, limit)
     .map((x) => x.n);
+}
+
+/**
+ * recall_memory, by meaning: Qdrant finds the notes closest to the query even when no word matches
+ * ("summed the bottom numbers" → "Adds denominators"). Keyword ranking fills the rest and is the
+ * fallback whenever the vector index is off, still starting or too slow.
+ */
+export async function recallNotesSmart(query: string, topic: Topic, limit = 4): Promise<{ notes: MemoryNote[]; semantic: boolean }> {
+  const keyword = recallNotes(query, topic, limit);
+  const hits = (await searchNotes(query, topic, limit))?.filter((h) => h.score >= 0.2) ?? [];
+  if (!hits.length) return { notes: keyword, semantic: false };
+  const notes = hits.map((h) => h.note);
+  for (const n of keyword) if (notes.length < limit && !notes.some((x) => x.id === n.id)) notes.push(n);
+  return { notes, semantic: true };
+}
+
+/** An existing note of the same kind that already says this (≥ 0.8 cosine): lets write_memory confirm it instead of adding a near-duplicate. */
+export async function findSimilarNote(text: string, kind: MemoryNote['kind'], topic: MemoryNote['topic']): Promise<MemoryNote | null> {
+  const hits = await searchNotes(text, topic === 'any' ? null : topic, 4);
+  return hits?.find((h) => h.score >= 0.8 && h.note.kind === kind && h.note.topic === topic)?.note ?? null;
 }

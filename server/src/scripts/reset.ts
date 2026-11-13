@@ -8,4 +8,4 @@ for (const f of Object.values(FILES)) {
     console.log(`removed ${f}`);
   }
 }
-console.log('Reset done. Restart the server (it caches open sessions in memory).');
+console.log('Reset done. Restart the server (it caches open sessions in memory; the vector index is re-synced from these files on start).');

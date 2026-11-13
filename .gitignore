@@ -4,6 +4,7 @@ node_modules/
 !.env.example
 data/
 server/data/
+.vector/
 dist/
 .expo/
 web-build/

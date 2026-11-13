@@ -9,22 +9,29 @@ import { createJson } from './llm.js';
 import { loadMemory } from './memory.js';
 import { verifyAnswer } from './problem.js';
 import { logEvent, readEvents } from './store.js';
+import { describeStruggle, recurringStruggles, type Recurring } from './vector/semantic.js';
 
 type Plan = NonNullable<SessionEndResponse['plan']>;
 
-interface LessonResult { lessonId: string; attempted: number; solved: number; hints: number[]; wrong: string[]; unsolved: number }
+interface LessonResult { lessonId: string; attempted: number; solved: number; hints: number[]; wrong: string[]; unsolved: number; answerSecs: number[] }
 
 function lessonResults(sessionId: string): Map<string, LessonResult> {
   const events = readEvents().filter((e) => e.sessionId === sessionId);
   const problemLesson = new Map<string, string>();
   for (const e of events) if (e.type === 'problem' && e.problemId && typeof e.lessonId === 'string') problemLesson.set(e.problemId, e.lessonId);
   const res = new Map<string, LessonResult>();
-  const get = (id: string) => res.get(id) ?? (res.set(id, { lessonId: id, attempted: 0, solved: 0, hints: [], wrong: [], unsolved: 0 }), res.get(id)!);
+  const get = (id: string) => res.get(id) ?? (res.set(id, { lessonId: id, attempted: 0, solved: 0, hints: [], wrong: [], unsolved: 0, answerSecs: [] }), res.get(id)!);
   const solvedProblems = new Set<string>();
+  const asked = new Map<string, number>(); // problemId -> when the tutor last spoke
   for (const e of events) {
     const lid = e.problemId ? problemLesson.get(e.problemId) : undefined;
     if (!lid) continue;
     const r = get(lid);
+    if (e.type === 'hint') asked.set(e.problemId!, Date.parse(e.ts));
+    if (e.type === 'attempt' && asked.has(e.problemId!)) {
+      const sec = (Date.parse(e.ts) - asked.get(e.problemId!)!) / 1000; // how long the child needed to answer
+      if (sec > 0 && sec <= 600) r.answerSecs.push(Math.round(sec));
+    }
     if (e.type === 'problem') r.attempted += 1;
     if (e.type === 'attempt' && e.outcome === 'wrong' && e.text) r.wrong.push(String(e.text));
     if (e.type === 'solved') { r.solved += 1; r.hints.push(Number(e.hints ?? 0)); solvedProblems.add(e.problemId!); }
@@ -142,10 +149,18 @@ export async function planNext(sessionId: string): Promise<Plan | undefined> {
     return { changes, trace: [{ kind: 'plan', text: 'No lesson practice this session — plan unchanged' }], nextLessonId: c.nextLessonId, warmup: publicWarmup(c.warmup) };
   }
   const memory = loadMemory();
-  const mis = memory.filter((n) => n.kind === 'misconception').sort((a, b) => b.seen - a.seen)[0];
+  // Long-term memory: which of today's mistakes already showed up in earlier sessions (semantic search in Qdrant)?
+  const recurring: Recurring[] = await recurringStruggles(sessionId).catch(() => []);
+  const comeback = recurring.find((r) => r.earlier.length > 0);
+  const mis = recurring.find((r) => r.note)?.note?.note ?? memory.filter((n) => n.kind === 'misconception').sort((a, b) => b.seen - a.seen)[0];
   const totalProblems = [...results.values()].reduce((a, r) => a + r.attempted, 0);
   trace.push({ kind: 'read', text: `Read session: ${totalProblems} problem${totalProblems === 1 ? '' : 's'} in ${results.size} lesson${results.size === 1 ? '' : 's'}` });
+  if (comeback) trace.push({ kind: 'recall', text: `Long-term memory: today's mistake also came up in ${comeback.sessions} earlier session${comeback.sessions === 1 ? '' : 's'}` });
   if (mis) trace.push({ kind: 'recall', text: `Memory: ${mis.text.slice(0, 50)} (seen ${mis.seen}x)` });
+  const recurringInfo = recurring.slice(0, 4).map((r) => ({
+    today: { problem: r.problemText, childSaid: r.said || '(no answer)' }, lessonId: r.lessonId,
+    earlierSessionsWithSimilarStruggle: r.sessions, similarEarlierMoments: r.earlier.slice(0, 3).map(describeStruggle), matchingNote: r.note?.note.text ?? null,
+  }));
 
   const apply = (id: string, status: LessonStatus, mastery: number, why: string) => {
     const l = c.lessons.find((x) => x.id === id);
@@ -177,10 +192,11 @@ export async function planNext(sessionId: string): Promise<Plan | undefined> {
 Given lesson results from the session that just ended, the child's memory notes and the curriculum, decide:
 - lessons: status + mastery for each lesson the session gives evidence about (mastered = solved with little or no help; review = needed many hints, gave wrong answers or did not finish; in-progress = making progress). Lessons without evidence: omit.
 - nextLessonId: what the child should do next (review before new material, otherwise the first lesson not mastered).
-- warmup: ONE NEW short practice problem (not already in the curriculum) for the start of next session that targets the biggest misconception, solvable with the lesson's textbook method, with a single numeric answer and a mathjs answerExpression. message: a warm one-liner to the child, no answer.`,
+- warmup: ONE NEW short practice problem (not already in the curriculum) for the start of next session that targets the biggest misconception, solvable with the lesson's textbook method, with a single numeric answer and a mathjs answerExpression. message: a warm one-liner to the child, no answer.
+Evidence to weigh: answerSecs = seconds the child needed for each answer (long answers = unsure, even when right). "Recurring struggles" come from a semantic search over ALL earlier sessions: a struggle that keeps coming back matters more than a one-off slip, so aim the warm-up (and "review") at it, and build the warm-up so it needs exactly the idea the child keeps missing; where a kind of hint HELPED before, the message may nod to it (e.g. "let's picture the pieces").`,
         messages: [{
           role: 'user',
-          content: `Curriculum:\n${JSON.stringify(lessonsInfo)}\n\nSession results per lesson (hints = hints needed per solved problem; wrong = the child's wrong answers):\n${JSON.stringify([...results.values()])}\n\nMemory notes:\n${JSON.stringify(memory.map(({ topic, kind, text, seen }) => ({ topic, kind, text, seen })))}`,
+          content: `Curriculum:\n${JSON.stringify(lessonsInfo)}\n\nSession results per lesson (hints = hints needed per solved problem; wrong = the child's wrong answers):\n${JSON.stringify([...results.values()])}\n\nMemory notes:\n${JSON.stringify(memory.map(({ topic, kind, text, seen }) => ({ topic, kind, text, seen })))}\n\nRecurring struggles (semantic matches from earlier sessions):\n${recurringInfo.length ? JSON.stringify(recurringInfo) : 'none found'}`,
         }],
         schema: SCHEMA,
       });
@@ -225,7 +241,10 @@ Given lesson results from the session that just ended, the child's memory notes 
   }
 
   if (!warm) {
-    const worst = [...results.values()].sort((a, b) => (b.wrong.length + avg(b.hints) + b.unsolved * 2) - (a.wrong.length + avg(a.hints) + a.unsolved * 2))[0];
+    // hardest lesson of the session: wrong answers, hints, unfinished problems, slow answers and mistakes that keep coming back
+    const comebacks = (id: string) => recurring.filter((x) => x.lessonId === id).reduce((a, x) => a + x.sessions, 0);
+    const struggle = (r: LessonResult) => r.wrong.length + avg(r.hints) + r.unsolved * 2 + (avg(r.answerSecs) >= 45 ? 1 : 0) + comebacks(r.lessonId);
+    const worst = [...results.values()].sort((a, b) => struggle(b) - struggle(a))[0];
     const target = c.lessons.find((l) => l.id === worst?.lessonId) ?? c.lessons.find((l) => l.id === next) ?? c.lessons[0];
     warm = ruleWarmup(c, target, mis);
     trace.push({ kind: 'generate', text: `Wrote warm-up "${warm.problem.text.slice(0, 40)}" for ${lessonNo(c, target.id)}` });
