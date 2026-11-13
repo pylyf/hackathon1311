@@ -7,7 +7,7 @@ import FractionBars from './FractionBars';
 import NumberLine from './NumberLine';
 import UnitLadder from './UnitLadder';
 
-export function GenUIRenderer({ spec, onEvent }: { spec: UISpec; onEvent?: (e: UIEvent) => void }) {
+export function GenUIRenderer({ spec, onEvent, readOnly }: { spec: UISpec; onEvent?: (e: UIEvent) => void; readOnly?: boolean }) {
   const { width: winW } = useWindowDimensions();
   const width = Math.min(winW - 64, 560);
   // Re-mount when the spec changes so local state (shading, marker…) resets.
@@ -31,7 +31,7 @@ export function GenUIRenderer({ spec, onEvent }: { spec: UISpec; onEvent?: (e: U
       body = <Text style={styles.caption}>(I can't draw that one yet.)</Text>;
   }
 
-  const interactive = spec.type === 'BarModel' || spec.interactive;
+  const interactive = !readOnly && (spec.type === 'BarModel' || spec.interactive);
 
   return (
     <View style={[styles.wrap, shadow]}>

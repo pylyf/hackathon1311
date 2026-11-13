@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import { api, errMsg } from '../api';
+import { ApiError, api, errMsg } from '../api';
 import type { HintLevel, HintStyle, ProblemResponse, TurnRequest, TutorReply, UIEvent, UISpec } from '../contract';
 import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { recordingToBase64, speakReply, stopSpeaking } from '../audio';
 import { colors, font, radius, shadow } from '../theme';
 import { BigButton, Card, ErrorBox, TopBar } from '../ui';
+import { TracePanel } from '../trace';
 
 const UI_DEBOUNCE_MS = 1200;
 const RECORDING_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, numberOfChannels: 1, bitRate: 64000 };
@@ -25,12 +26,14 @@ export default function TalkScreen({
   problem,
   onBack,
   onNext,
+  onNextProblem,
   onFinish,
 }: {
   sessionId: string;
   problem: ProblemResponse;
   onBack: () => void;
-  onNext: () => void;
+  onNext: () => void; // photo flow: snap another problem
+  onNextProblem: (p: ProblemResponse) => void; // lesson flow: go to the next practice problem
   onFinish: () => Promise<void>;
 }) {
   const [reply, setReply] = useState<TutorReply>(problem.intro);
@@ -43,6 +46,11 @@ export default function TalkScreen({
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [finishing, setFinishing] = useState(false);
+  // Lesson flow: next problem is prefetched as soon as this one is solved.
+  const lessonId = problem.lessonId;
+  const [nextProblem, setNextProblem] = useState<ProblemResponse | null>(null);
+  const [lessonDone, setLessonDone] = useState(false);
+  const [nextBusy, setNextBusy] = useState(false);
 
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
   const busyRef = useRef(false);
@@ -51,8 +59,10 @@ export default function TalkScreen({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<ScrollViewInstance>(null);
 
+  const [replyCount, setReplyCount] = useState(0);
   const applyReply = useCallback((r: TutorReply) => {
     setReply(r);
+    setReplyCount((c) => c + 1);
     if (r.ui) setUi(r.ui);
     if (r.hint) setHint(r.hint);
     speakReply(r.text, r.audioBase64);
@@ -160,6 +170,42 @@ export default function TalkScreen({
     sendTurn({ text: t });
   };
 
+  const fetchNext = useCallback(async (): Promise<ProblemResponse | null> => {
+    if (!lessonId) return null;
+    setNextBusy(true);
+    try {
+      const p = await api.lessonProblem({ sessionId, lessonId });
+      if (!p || !p.problemId || p.problemId === problem.problemId) {
+        setLessonDone(true);
+        return null;
+      }
+      setNextProblem(p);
+      return p;
+    } catch (e) {
+      // 404/409/410 = no unsolved problems left in this lesson.
+      if (e instanceof ApiError && [404, 409, 410].includes(e.status)) setLessonDone(true);
+      else throw e;
+      return null;
+    } finally {
+      setNextBusy(false);
+    }
+  }, [lessonId, sessionId, problem.problemId]);
+
+  useEffect(() => {
+    if (solved && lessonId) fetchNext().catch(() => {}); // errors are retried when "Next problem" is tapped
+  }, [solved, lessonId, fetchNext]);
+
+  const next = async () => {
+    if (!lessonId) return onNext();
+    setError(null);
+    try {
+      const p = nextProblem ?? (await fetchNext());
+      if (p) onNextProblem(p);
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  };
+
   const finish = async () => {
     setFinishing(true);
     setError(null);
@@ -190,7 +236,9 @@ export default function TalkScreen({
       />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <Card style={styles.problem}>
-          <Text style={styles.problemLabel}>YOUR PROBLEM · {problem.topic}</Text>
+          <Text style={styles.problemLabel}>
+            {lessonId ? 'PRACTICE' : 'YOUR PROBLEM'} · {problem.topic}
+          </Text>
           <Text style={styles.problemText}>{problem.text}</Text>
         </Card>
 
@@ -206,6 +254,8 @@ export default function TalkScreen({
           </View>
         </View>
 
+        <TracePanel steps={reply.trace} runId={replyCount} />
+
         {transcript && (
           <View style={styles.kidBubble}>
             <Text style={styles.kidText}>You: “{transcript}”</Text>
@@ -217,10 +267,18 @@ export default function TalkScreen({
 
       {solved ? (
         <View style={[styles.bottom, styles.celebrate]}>
-          <Text style={styles.party}>🎉 🌟 🎉</Text>
-          <Text style={styles.celebrateText}>You did it! Awesome thinking!</Text>
+          <Text style={styles.party}>{lessonDone ? '🏆 🌟 🏆' : '🎉 🌟 🎉'}</Text>
+          <Text style={styles.celebrateText}>{lessonDone ? 'Lesson done! You practiced every problem!' : 'You did it! Awesome thinking!'}</Text>
           <View style={styles.row}>
-            <BigButton label="Next problem" onPress={onNext} color={colors.green} style={{ flex: 1 }} disabled={finishing} />
+            {!lessonDone && (
+              <BigButton
+                label={nextBusy && !nextProblem ? 'Getting…' : 'Next problem'}
+                onPress={next}
+                color={colors.green}
+                style={{ flex: 1 }}
+                disabled={finishing || (nextBusy && !nextProblem)}
+              />
+            )}
             <BigButton label={finishing ? 'Saving…' : 'Finish'} onPress={finish} color={colors.purple} style={{ flex: 1 }} disabled={finishing} />
           </View>
         </View>

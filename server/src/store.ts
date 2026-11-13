@@ -4,12 +4,13 @@ import { fileURLToPath } from 'node:url';
 import type { HintStyle, HintLevel, Topic } from './contract.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.resolve(here, '..', 'data');
+export const DATA_DIR = process.env.NUDGE_DATA_DIR ? path.resolve(process.env.NUDGE_DATA_DIR) : path.resolve(here, '..', 'data');
 export const FILES = {
   bandit: path.join(DATA_DIR, 'bandit.json'),
   memory: path.join(DATA_DIR, 'memory.json'),
   events: path.join(DATA_DIR, 'events.jsonl'),
   sessions: path.join(DATA_DIR, 'sessions.json'),
+  curriculum: path.join(DATA_DIR, 'curriculum.json'),
 };
 
 export function ensureDataDir(): void {
@@ -39,7 +40,8 @@ export type EventType =
   | 'solved'
   | 'bandit'
   | 'leak_blocked'
-  | 'session_end';
+  | 'session_end'
+  | 'plan';
 
 export interface NudgeEvent {
   ts: string;

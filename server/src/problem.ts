@@ -20,6 +20,24 @@ export interface ParsedProblem {
 
 export class NotAProblemError extends Error {}
 
+/** Evaluate a plain-number mathjs expression; null if it fails or is not a finite number. */
+export function evalExpression(expression: string): number | null {
+  try {
+    const r = evaluate(String(expression).replace(/×/g, '*').replace(/÷/g, '/'));
+    const n = typeof r === 'number' ? r : Number(r?.toString());
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** mathjs check of a model's answer. Prefers the computed value when the model's arithmetic disagrees. */
+export function verifyAnswer(expression: string, modelValue: number): { value: number; verified: boolean; computed: number | null } {
+  const computed = evalExpression(expression);
+  const verified = computed !== null && approxEq(computed, modelValue);
+  return { value: computed ?? modelValue, verified, computed };
+}
+
 interface SolverOutput {
   isMathProblem: boolean;
   text: string;
@@ -95,19 +113,8 @@ export async function parseProblem(imageBase64: string, mediaType: 'image/jpeg' 
 
   if (!out.isMathProblem || !out.text.trim()) throw new NotAProblemError('I could not find a math problem in that photo. Try again with the problem in focus.');
 
-  // Verify the model's answer with mathjs.
-  let computed: number | null = null;
-  try {
-    const r = evaluate(out.answerExpression);
-    const n = typeof r === 'number' ? r : Number(r?.toString());
-    computed = Number.isFinite(n) ? n : null;
-  } catch {
-    computed = null;
-  }
-  const verified = computed !== null && approxEq(computed, out.answerValue);
-  if (!verified) console.warn(`[problem] answer not verified: model=${out.answerValue} mathjs(${out.answerExpression})=${computed}`);
-  // Prefer the computed value when the model's arithmetic disagrees with its own expression.
-  const value = computed ?? out.answerValue;
+  const { value, verified } = verifyAnswer(out.answerExpression, out.answerValue);
+  if (!verified) console.warn(`[problem] answer not verified: model=${out.answerValue} mathjs(${out.answerExpression})=${value}`);
 
   return {
     text: out.text.trim(),

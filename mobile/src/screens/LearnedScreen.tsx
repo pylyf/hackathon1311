@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { api, errMsg } from '../api';
-import type { HintStyle, LearnedResponse, MemoryNote, Topic } from '../contract';
+import type { Curriculum, HintStyle, LearnedResponse, MemoryNote, SessionEndResponse, Topic } from '../contract';
 import { colors, font } from '../theme';
 import { BigButton, Card, ErrorBox, Loading, TopBar } from '../ui';
+import { TracePanel } from '../trace';
 
 const STYLES: HintStyle[] = ['verbal', 'visual', 'story', 'smaller-numbers'];
 const STYLE_LABEL: Record<HintStyle, string> = {
@@ -46,7 +47,46 @@ function NoteRow({ n }: { n: MemoryNote }) {
   );
 }
 
-export default function LearnedScreen({ newNotes, onBack }: { newNotes?: MemoryNote[]; onBack: () => void }) {
+type Plan = NonNullable<SessionEndResponse['plan']>;
+
+function PlanCard({ plan, curriculum }: { plan: Plan; curriculum: Curriculum | null }) {
+  const next = plan.nextLessonId ? curriculum?.lessons.find((l) => l.id === plan.nextLessonId) : null;
+  return (
+    <View style={styles.plan}>
+      <Text style={styles.planTitle}>🗓️ Plan for next time</Text>
+      {plan.changes.map((c, i) => (
+        <Text key={i} style={styles.planChange}>
+          • {c}
+        </Text>
+      ))}
+      {plan.nextLessonId && (
+        <Text style={styles.planLine}>
+          <Text style={styles.bold}>Next lesson: </Text>
+          {next?.title ?? plan.nextLessonId}
+        </Text>
+      )}
+      {plan.warmup && (
+        <Text style={styles.planLine}>
+          <Text style={styles.bold}>🔥 Warm-up: </Text>
+          {plan.warmup.message}
+        </Text>
+      )}
+      <TracePanel steps={plan.trace} title="🧠 How Nudge planned this" />
+    </View>
+  );
+}
+
+export default function LearnedScreen({
+  newNotes,
+  plan,
+  curriculum,
+  onBack,
+}: {
+  newNotes?: MemoryNote[];
+  plan?: Plan;
+  curriculum?: Curriculum | null;
+  onBack: () => void;
+}) {
   const [data, setData] = useState<LearnedResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,12 +110,13 @@ export default function LearnedScreen({ newNotes, onBack }: { newNotes?: MemoryN
     <View style={{ flex: 1 }}>
       <TopBar title="What Nudge learned" onBack={onBack} />
       <ScrollView contentContainerStyle={styles.scroll}>
-        {newNotes && newNotes.length > 0 && (
+        {((newNotes && newNotes.length > 0) || plan) && (
           <Card style={styles.newCard}>
             <Text style={styles.h2}>✨ New from today</Text>
-            {newNotes.map((n) => (
+            {newNotes?.map((n) => (
               <NoteRow key={n.id} n={n} />
             ))}
+            {plan && <PlanCard plan={plan} curriculum={curriculum ?? null} />}
           </Card>
         )}
 
@@ -183,5 +224,10 @@ const styles = StyleSheet.create({
   note: { flexDirection: 'row', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.line },
   noteIcon: { fontSize: 26 },
   noteText: { fontSize: font.body, color: colors.ink },
+  plan: { marginTop: 10, gap: 6, backgroundColor: '#F2FBF6', borderRadius: 16, padding: 12, borderWidth: 2, borderColor: '#BDEBD3' },
+  planTitle: { fontSize: font.body, fontWeight: '900', color: '#178A57' },
+  planChange: { fontSize: font.small + 1, color: colors.ink, lineHeight: 22 },
+  planLine: { fontSize: font.small + 1, color: colors.ink, lineHeight: 22 },
+  bold: { fontWeight: '800' },
   noteMeta: { fontSize: 12, color: colors.inkSoft, marginTop: 2 },
 });

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { HintLevel, HintStyle, MemoryNote, Topic, UISpec } from './contract.js';
+import type { HintLevel, HintStyle, MemoryNote, SessionEndResponse, Topic, UISpec } from './contract.js';
 import { FILES, readJson, writeJson } from './store.js';
 
 export interface HiddenAnswer {
@@ -30,6 +30,8 @@ export interface ProblemState {
   history: { role: 'tutor' | 'child'; text: string }[];
   pendingHints: PendingHint[];
   createdAt: string;
+  lessonId?: string;   // set when the problem comes from the curriculum
+  practiceId?: string; // PracticeProblem.id in the curriculum (or the warm-up)
 }
 
 export interface SessionState {
@@ -38,6 +40,7 @@ export interface SessionState {
   startedAt: string;
   ended: boolean;
   endNotes?: MemoryNote[];
+  endPlan?: SessionEndResponse['plan'];
   problems: Record<string, ProblemState>;
 }
 

@@ -9,13 +9,13 @@ import { BigButton, ErrorBox, Loading, TopBar } from '../ui';
 
 const MAX_SIDE = 1280;
 
-type Picked = { uri: string; width: number; height: number; base64?: string | null; mimeType?: string };
+export type Picked = { uri: string; width: number; height: number; base64?: string | null; mimeType?: string };
 
-async function toJpegBase64(asset: Picked): Promise<{ base64: string; mediaType: 'image/jpeg' | 'image/png' }> {
+export async function toJpegBase64(asset: Picked, maxSide = MAX_SIDE): Promise<{ base64: string; mediaType: 'image/jpeg' | 'image/png' }> {
   try {
     const ctx = ImageManipulator.manipulate(asset.uri);
-    if (Math.max(asset.width, asset.height) > MAX_SIDE) {
-      ctx.resize(asset.width >= asset.height ? { width: MAX_SIDE } : { height: MAX_SIDE });
+    if (Math.max(asset.width, asset.height) > maxSide) {
+      ctx.resize(asset.width >= asset.height ? { width: maxSide } : { height: maxSide });
     }
     const ref = await ctx.renderAsync();
     const out = await ref.saveAsync({ format: SaveFormat.JPEG, compress: 0.7, base64: true });

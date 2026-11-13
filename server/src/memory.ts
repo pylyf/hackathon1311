@@ -62,3 +62,17 @@ export function mergeNotes(updates: NoteUpdate[]): MemoryNote[] {
   saveMemory(notes);
   return [...touched.values()];
 }
+
+const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'is', 'it', 'with', 'for', 'what', 'how', 'child', 'does', 'do']);
+const words = (s: string) => norm(s).split(' ').filter((w) => w.length > 2 && !STOP.has(w));
+
+/** recall_memory tool: topic filter + keyword-overlap ranking (ties: seen, recency). */
+export function recallNotes(query: string, topic: Topic, limit = 4): MemoryNote[] {
+  const q = new Set(words(query));
+  return loadMemory()
+    .filter((n) => n.topic === topic || n.topic === 'any')
+    .map((n) => ({ n, score: words(n.text).filter((w) => q.has(w) || [...q].some((x) => x.length > 4 && w.startsWith(x.slice(0, 5)))).length }))
+    .sort((a, b) => b.score - a.score || rank(a.n, b.n))
+    .slice(0, limit)
+    .map((x) => x.n);
+}

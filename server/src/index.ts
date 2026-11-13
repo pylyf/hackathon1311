@@ -3,6 +3,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { randomUUID } from 'node:crypto';
 import { CHILD_ID, ELEVEN_TTS_MODEL, HAS_ELEVEN, MOCK, MODEL_SOLVER, MODEL_TUTOR, PORT } from './config.js';
 import type {
+  CurriculumResponse, LessonProblemRequest, TextbookJobResponse, TextbookRequest,
   LearnedResponse, ProblemRequest, ProblemResponse, SessionEndRequest, SessionEndResponse,
   SessionStartResponse, TurnRequest, TurnResponse,
 } from './contract.js';
@@ -12,7 +13,9 @@ import { NotAProblemError, parseProblem } from './problem.js';
 import { computeStats, reflect } from './reflect.js';
 import { createSession, getOrCreateSession, getSession, persistSessions, type ProblemState } from './state.js';
 import { ensureDataDir, logEvent } from './store.js';
-import { flushPendingHints, introReply, tutorTurn } from './tutor.js';
+import { flushPendingHints, introReply, lessonIntro, tutorTurn } from './tutor.js';
+import { findLesson, jobStatus, loadCurriculum, markLessonStarted, markPracticeSolved, publicCurriculum, startTextbookJob, type StoredProblem } from './curriculum.js';
+import { planNext } from './planner.js';
 import { SttUnavailableError, synthesize, transcribe } from './voice.js';
 
 ensureDataDir();
@@ -77,6 +80,82 @@ app.post('/problem', route(async (req, res) => {
   res.json(body);
 }));
 
+// ---------- curriculum ----------
+
+app.post('/textbook', route(async (req, res) => {
+  const { fileBase64, mediaType, fileName } = (req.body ?? {}) as Partial<TextbookRequest>;
+  if (!fileBase64) throw new HttpError(400, 'fileBase64 is required');
+  const mt = mediaType === 'image/png' || mediaType === 'image/jpeg' ? mediaType : 'application/pdf';
+  const body: TextbookJobResponse = { jobId: startTextbookJob({ fileBase64, mediaType: mt, fileName }) };
+  res.json(body);
+}));
+
+app.get('/textbook/job/:jobId', (req, res) => {
+  const st = jobStatus(String(req.params.jobId));
+  if (!st) {
+    res.status(404).json({ error: 'Unknown job (server restarted?) — upload again' });
+    return;
+  }
+  res.json(st);
+});
+
+app.get('/curriculum', (_req, res) => {
+  const body: CurriculumResponse = { curriculum: publicCurriculum(loadCurriculum()) };
+  res.json(body);
+});
+
+app.post('/lesson/problem', route(async (req, res) => {
+  const { sessionId, lessonId, problemId, warmup } = (req.body ?? {}) as Partial<LessonProblemRequest>;
+  if (!sessionId || (!lessonId && !warmup)) throw new HttpError(400, 'sessionId and lessonId are required');
+  const c = loadCurriculum();
+  if (!c) throw new HttpError(404, 'No curriculum yet — upload a textbook chapter first');
+  let src: StoredProblem | undefined;
+  let lid: string;
+  if (warmup) {
+    if (!c.warmup) throw new HttpError(404, 'No warm-up planned yet');
+    if (c.warmup.problem.solved) throw new HttpError(410, 'Warm-up already done');
+    src = c.warmup.problem;
+    lid = c.warmup.lessonId;
+  } else {
+    const lesson = findLesson(c, lessonId!);
+    if (!lesson) throw new HttpError(404, `Unknown lesson ${lessonId}`);
+    lid = lesson.id;
+    if (problemId) {
+      src = lesson.problems.find((x) => x.id === problemId);
+      if (!src) throw new HttpError(404, `Unknown problem ${problemId} in lesson ${lid}`);
+    } else {
+      src = lesson.problems.find((x) => !x.solved);
+      if (!src) throw new HttpError(410, 'Lesson done! All practice problems are solved.');
+    }
+  }
+  const session = getOrCreateSession(sessionId, CHILD_ID);
+  const p: ProblemState = {
+    id: randomUUID(),
+    sessionId,
+    text: src.text,
+    topic: src.topic,
+    question: src.question,
+    quantities: [],
+    answer: { ...src.answer },
+    starterVisual: src.starterVisual,
+    level: 1,
+    hintsGiven: 0,
+    solved: false,
+    history: [],
+    pendingHints: [],
+    createdAt: new Date().toISOString(),
+    lessonId: lid,
+    practiceId: src.id,
+  };
+  session.problems[p.id] = p;
+  markLessonStarted(lid);
+  logEvent({ sessionId, problemId: p.id, type: 'problem', topic: p.topic, text: p.text, verified: p.answer.verified, lessonId: lid, practiceId: src.id, warmup: !!warmup });
+  const intro = await lessonIntro(p, warmup ? c.warmup?.message : undefined);
+  persistSessions();
+  const body: ProblemResponse = { problemId: p.id, lessonId: lid, text: p.text, topic: p.topic, intro };
+  res.json(body);
+}));
+
 app.post('/turn', route(async (req, res) => {
   const { sessionId, problemId, audioBase64, audioMimeType, text, uiEvent } = (req.body ?? {}) as Partial<TurnRequest>;
   if (!sessionId || !problemId) throw new HttpError(400, 'sessionId and problemId are required');
@@ -109,6 +188,7 @@ app.post('/turn', route(async (req, res) => {
   if (!transcript && !uiEvent) throw new HttpError(400, 'Send text, audio or a uiEvent');
 
   const result = await tutorTurn(p, transcript, uiEvent);
+  if (result.solved && p.practiceId) markPracticeSolved(p.practiceId);
   persistSessions();
   const body: TurnResponse = { transcript, reply: result.reply, solved: result.solved };
   res.json(body);
@@ -120,17 +200,24 @@ app.post('/session/end', route(async (req, res) => {
   const s = getSession(sessionId);
   if (!s) throw new HttpError(404, 'Unknown session');
   if (s.ended) {
-    const body: SessionEndResponse = { notes: s.endNotes ?? [] };
+    const body: SessionEndResponse = { notes: s.endNotes ?? [], ...(s.endPlan ? { plan: s.endPlan } : {}) };
     res.json(body);
     return;
   }
   for (const p of Object.values(s.problems)) flushPendingHints(p);
   const notes = await reflect(sessionId);
+  let plan: SessionEndResponse['plan'];
+  try {
+    plan = await planNext(sessionId);
+  } catch (e) {
+    console.error('[planner] failed', e);
+  }
   s.ended = true;
   s.endNotes = notes;
+  s.endPlan = plan;
   logEvent({ sessionId, type: 'session_end', notes: notes.length });
   persistSessions();
-  const body: SessionEndResponse = { notes };
+  const body: SessionEndResponse = { notes, ...(plan ? { plan } : {}) };
   res.json(body);
 }));
 

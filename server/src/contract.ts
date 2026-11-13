@@ -56,6 +56,13 @@ export interface UIEvent {
   data: Record<string, unknown>; // e.g. { row: 0, shaded: 2, of: 4 }
 }
 
+// ---------- Agent trace (shown in the "Nudge is thinking" panel) ----------
+
+export interface TraceStep {
+  kind: 'read' | 'plan' | 'recall' | 'strategy' | 'override' | 'draw' | 'check' | 'memory' | 'generate' | 'verify' | 'speak';
+  text: string; // short, human-readable, e.g. "Recalled: adds denominators"
+}
+
 // ---------- Tutor reply ----------
 
 export interface TutorReply {
@@ -63,6 +70,79 @@ export interface TutorReply {
   audioBase64: string | null; // mp3, null if TTS unavailable (mobile then uses expo-speech)
   ui: UISpec | null;          // component to show (replaces the previous one), null = keep current
   hint: { level: HintLevel; style: HintStyle } | null;
+  trace?: TraceStep[];        // what the agent did this turn, in order
+}
+
+// ---------- Curriculum (built by the agent from a textbook chapter) ----------
+
+export interface PracticeProblem {
+  id: string;
+  text: string;          // problem statement for the child (answer is kept server-side)
+  topic: Topic;
+  skill: string;         // e.g. "add fractions with the same denominator"
+  difficulty: 1 | 2 | 3;
+}
+
+export type LessonStatus = 'locked' | 'ready' | 'in-progress' | 'review' | 'mastered';
+
+export interface Lesson {
+  id: string;
+  title: string;          // e.g. "Adding fractions with the same bottom number"
+  topic: Topic;
+  skill: string;
+  summary: string;        // one sentence
+  explanation: string;    // short kid-friendly written lesson; paragraphs separated by \n\n
+  workedExample: string;  // one worked example, steps separated by \n
+  methodNote: string;     // how the textbook teaches it (tutor must use the same method)
+  sourcePages?: string;   // e.g. "p. 2, section 5.3"
+  visual?: UISpec;        // optional illustration for the written lesson
+  problems: PracticeProblem[];
+  status: LessonStatus;
+  mastery: number;        // 0..1
+}
+
+export interface WarmUp {
+  message: string;        // e.g. "Last time adding fractions was tricky. Quick warm-up?"
+  lessonId: string;
+  problem: PracticeProblem;
+}
+
+export interface Curriculum {
+  id: string;
+  title: string;          // e.g. "Chapter 5 · Fractions"
+  source: string;         // uploaded file name
+  createdAt: string;
+  lessons: Lesson[];
+  nextLessonId: string | null;
+  warmup: WarmUp | null;
+}
+
+// POST /textbook — starts an async agent job (building takes a while)
+export interface TextbookRequest {
+  fileBase64: string;
+  mediaType: 'application/pdf' | 'image/jpeg' | 'image/png';
+  fileName?: string;
+}
+export interface TextbookJobResponse { jobId: string }
+
+// GET /textbook/job/:jobId — poll every ~1.5 s
+export interface TextbookJobStatus {
+  status: 'running' | 'done' | 'error';
+  steps: TraceStep[];          // live progress of the agent
+  curriculum?: Curriculum;     // when done
+  error?: string;
+}
+
+// GET /curriculum
+export interface CurriculumResponse { curriculum: Curriculum | null }
+
+// POST /lesson/problem — start a practice problem from the curriculum (no photo)
+// Returns ProblemResponse. Omit problemId to get the next unsolved problem of the lesson.
+export interface LessonProblemRequest {
+  sessionId: string;
+  lessonId: string;
+  problemId?: string;
+  warmup?: boolean;            // start the curriculum's warm-up problem instead
 }
 
 // ---------- Endpoints ----------
@@ -78,6 +158,7 @@ export interface ProblemRequest {
 }
 export interface ProblemResponse {
   problemId: string;
+  lessonId?: string;   // set when the problem comes from the curriculum
   text: string;   // problem as read from the photo
   topic: Topic;
   intro: TutorReply; // tutor explains the problem and asks a first (L1) question
@@ -100,7 +181,15 @@ export interface TurnResponse {
 
 // POST /session/end
 export interface SessionEndRequest { sessionId: string }
-export interface SessionEndResponse { notes: MemoryNote[] }
+export interface SessionEndResponse {
+  notes: MemoryNote[];
+  plan?: {                     // what the planner agent changed for next time
+    changes: string[];         // e.g. "Lesson 3 → review", "New warm-up: 2/7 + 3/7"
+    trace: TraceStep[];
+    nextLessonId: string | null;
+    warmup: WarmUp | null;
+  };
+}
 
 // GET /learned
 export interface LearnedResponse {

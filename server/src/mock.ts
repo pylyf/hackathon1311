@@ -3,6 +3,8 @@
 import type { HintLevel, HintStyle, MemoryNote, Topic, UISpec } from './contract.js';
 import type { NoteUpdate } from './memory.js';
 import type { ParsedProblem } from './problem.js';
+import type { StoredLesson } from './curriculum.js';
+import type { ProblemState } from './state.js';
 import type { NudgeEvent } from './store.js';
 
 export function mockParseProblem(): ParsedProblem {
@@ -94,4 +96,41 @@ export function mockReflect(events: NudgeEvent[], _existing: MemoryNote[]): Note
     if (solved.some((e) => (e.hints ?? 99) <= 1)) notes.push({ topic, kind: 'mastered', text: `Solved a ${topic} problem with almost no help.` });
   }
   return notes;
+}
+
+const firstSentence = (s: string) => (s.match(/^[^.!?]*[.!?]/)?.[0] ?? s).trim();
+
+/** Generic ladder for curriculum problems, grounded in the lesson's method (mock mode). */
+export function mockLessonHint(opts: {
+  mode: 'turn' | 'intro';
+  outcome: string;
+  level: HintLevel;
+  style: HintStyle;
+  p: ProblemState;
+  lesson: StoredLesson;
+  interest?: string;
+  warmupMessage?: string;
+}): { text: string; ui: UISpec | null } {
+  const { p, lesson, level, style, outcome } = opts;
+  const visual = p.starterVisual ?? lesson.visual ?? null;
+  const wantsVisual = style === 'visual' || level === 3;
+  if (opts.mode === 'intro') {
+    const hook = style === 'story' && opts.interest ? `Imagine you're at ${opts.interest} practice and this pops up! ` : '';
+    if (opts.warmupMessage) return { text: `${opts.warmupMessage} Here it is: ${p.text} What does the problem tell us?`, ui: wantsVisual ? visual : null };
+    const text = `Let's practise ${lesson.title.toLowerCase()}! ${hook}${firstSentence(lesson.summary)} Here is your problem: ${p.text} What does the problem tell us?`;
+    return { text, ui: wantsVisual ? visual : null };
+  }
+  const ladder: Record<HintLevel, string> = {
+    1: `Let's read it again together. ${p.question} What do we know already?`,
+    2: `Remember our lesson: ${firstSentence(lesson.methodNote)} Can you try that first step?`,
+    3: 'Look at the picture on your screen. What does it show you, and what should we do with it?',
+    4: "Let's make it tiny first: try the very same idea with really small numbers. What would you do first?",
+    5: `Here is how our worked example starts: ${firstSentence(lesson.workedExample.split(String.fromCharCode(10))[0].replace(/\.?$/, '.'))} Can you do the same with our numbers?`,
+  };
+  let body = ladder[level];
+  if (style === 'smaller-numbers' && level < 4) body = ladder[4];
+  if (style === 'story') body = `${opts.interest ? `Think of it like ${opts.interest}: every part counts. ` : 'Imagine sharing it with a friend. '}${body}`;
+  if (outcome === 'correct_step') body = `Yes, that step is right! ${p.question} What comes next?`;
+  if (wantsVisual && level !== 3 && visual) body = `${body} You can use the picture to help.`;
+  return { text: `${LEAD[outcome] ?? ''}${body}`, ui: wantsVisual ? visual : null };
 }

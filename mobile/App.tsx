@@ -2,26 +2,43 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { api, errMsg } from './src/api';
-import type { MemoryNote, ProblemResponse } from './src/contract';
+import type { Curriculum, Lesson, MemoryNote, ProblemResponse, SessionEndResponse } from './src/contract';
 import { colors } from './src/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import PickScreen from './src/screens/PickScreen';
 import TalkScreen from './src/screens/TalkScreen';
 import LearnedScreen from './src/screens/LearnedScreen';
 import DemoScreen from './src/screens/DemoScreen';
+import UploadScreen from './src/screens/UploadScreen';
+import CurriculumScreen from './src/screens/CurriculumScreen';
+import LessonScreen from './src/screens/LessonScreen';
 import { stopSpeaking } from './src/audio';
 
 type Route =
   | { name: 'home' }
   | { name: 'pick' }
   | { name: 'talk'; problem: ProblemResponse }
-  | { name: 'learned'; newNotes?: MemoryNote[] }
-  | { name: 'demo' };
+  | { name: 'learned'; newNotes?: MemoryNote[]; plan?: SessionEndResponse['plan'] }
+  | { name: 'demo' }
+  | { name: 'upload' }
+  | { name: 'curriculum' }
+  | { name: 'lesson'; lesson: Lesson };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [curriculum, setCurriculum] = useState<Curriculum | null>(null);
+
+  // No curriculum (or an older server without /curriculum) simply means the photo-only flow.
+  const loadCurriculum = useCallback(async () => {
+    try {
+      const { curriculum: c } = await api.curriculum();
+      setCurriculum(c ?? null);
+    } catch {
+      /* keep what we have */
+    }
+  }, []);
 
   const startSession = useCallback(async (): Promise<string> => {
     setSessionError(null);
@@ -39,6 +56,10 @@ export default function App() {
     startSession().catch(() => {});
   }, [startSession]);
 
+  useEffect(() => {
+    if (route.name === 'home') loadCurriculum();
+  }, [route.name, loadCurriculum]);
+
   const ensureSession = useCallback(async () => sessionId ?? (await startSession()), [sessionId, startSession]);
 
   const go = (r: Route) => {
@@ -49,10 +70,19 @@ export default function App() {
   const finish = async () => {
     const id = sessionId;
     if (!id) return go({ name: 'learned' });
-    const { notes } = await api.endSession(id); // errors are shown by TalkScreen
+    const { notes, plan } = await api.endSession(id); // errors are shown by TalkScreen
     setSessionId(null);
     startSession().catch(() => {});
-    go({ name: 'learned', newNotes: notes });
+    loadCurriculum();
+    go({ name: 'learned', newNotes: notes, plan });
+  };
+
+  const startWarmup = async () => {
+    const w = curriculum?.warmup;
+    if (!w) return;
+    const id = await ensureSession();
+    const problem = await api.lessonProblem({ sessionId: id, lessonId: w.lessonId, problemId: w.problem.id, warmup: true });
+    go({ name: 'talk', problem });
   };
 
   let screen: React.ReactNode;
@@ -62,9 +92,14 @@ export default function App() {
         <HomeScreen
           sessionError={sessionError}
           onRetrySession={() => startSession().catch(() => {})}
+          curriculum={curriculum}
           onSnap={() => go({ name: 'pick' })}
           onLearned={() => go({ name: 'learned' })}
           onDemo={() => go({ name: 'demo' })}
+          onUpload={() => go({ name: 'upload' })}
+          onLesson={(lesson) => go({ name: 'lesson', lesson })}
+          onCurriculum={() => go({ name: 'curriculum' })}
+          onWarmup={startWarmup}
         />
       );
       break;
@@ -85,12 +120,46 @@ export default function App() {
           problem={route.problem}
           onBack={() => go({ name: 'home' })}
           onNext={() => go({ name: 'pick' })}
+          onNextProblem={(problem) => go({ name: 'talk', problem })}
           onFinish={finish}
         />
       );
       break;
     case 'learned':
-      screen = <LearnedScreen newNotes={route.newNotes} onBack={() => go({ name: 'home' })} />;
+      screen = <LearnedScreen newNotes={route.newNotes} plan={route.plan} curriculum={curriculum} onBack={() => go({ name: 'home' })} />;
+      break;
+    case 'upload':
+      screen = (
+        <UploadScreen
+          onBack={() => go({ name: 'home' })}
+          onDone={(c) => {
+            setCurriculum(c);
+            go({ name: 'curriculum' });
+          }}
+        />
+      );
+      break;
+    case 'curriculum':
+      screen = (
+        <CurriculumScreen
+          initial={curriculum}
+          onLoaded={setCurriculum}
+          onBack={() => go({ name: 'home' })}
+          onLesson={(lesson) => go({ name: 'lesson', lesson })}
+          onUpload={() => go({ name: 'upload' })}
+        />
+      );
+      break;
+    case 'lesson':
+      screen = (
+        <LessonScreen
+          key={route.lesson.id}
+          lesson={route.lesson}
+          ensureSession={ensureSession}
+          onBack={() => go(curriculum ? { name: 'curriculum' } : { name: 'home' })}
+          onProblem={(problem) => go({ name: 'talk', problem })}
+        />
+      );
       break;
     case 'demo':
       screen = <DemoScreen onBack={() => go({ name: 'home' })} />;
