@@ -258,9 +258,9 @@ app.get('/problem/:id/scene', route(async (req, res) => {
   res.json(await getPreparedScene(String(req.params.id)));
 }));
 
-app.get('/system', (_req, res) => {
-  res.json(computeSystem());
-});
+app.get('/system', route(async (_req, res) => {
+  res.json(await computeSystem());
+}));
 
 app.get('/insights', (_req, res) => {
   res.json(computeInsights());

@@ -453,6 +453,23 @@ export interface SystemResponse {
   bandit: BanditState;          // Beta(alpha, beta) per topic x hint style (Thompson sampling)
   traces: { ts: string; topic: Topic; style: HintStyle; level: HintLevel; ms?: number; text: string; ui: string | null; steps: TraceStep[] }[]; // latest agent turns
   log: { ts: string; type: string; summary: string }[]; // latest events, newest first
+  memory: {                     // long-term semantic memory (Qdrant)
+    state: string;              // 'ready' | 'starting' | 'off' | 'error' …
+    backend: 'qdrant' | 'keyword';
+    model: string;              // embedding model
+    dims: number;
+    url: string | null;
+    managed: boolean;           // true = Qdrant runs as a child of this server
+    notes: number | null;       // points in the notes collection
+    moments: number | null;     // points in the past-attempts collection
+    lastSync: string | null;
+  };
+}
+
+// GET /vector/search — what long-term memory recalls for a query
+export interface VectorSearchResponse {
+  notes: { score: number; kind: string; topic: string; text: string; seen: number }[];
+  struggles: Record<string, unknown>[];
 }
 
 // ---------- Learning state ----------

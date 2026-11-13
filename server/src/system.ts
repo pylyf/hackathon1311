@@ -5,6 +5,7 @@ import { loadBandit } from './bandit.js';
 import { brain } from './brain.js';
 import { loadMemory } from './memory.js';
 import { readEvents, type NudgeEvent } from './store.js';
+import { vectorStatus } from './vector/semantic.js';
 
 const TOOLS = ['recall_memory', 'get_strategy_advice', 'show_component', 'check_answer', 'check_step', 'write_memory', 'speak'];
 const BLOCKS = [
@@ -42,7 +43,8 @@ function summary(e: NudgeEvent): string {
   }
 }
 
-export function computeSystem(): SystemResponse {
+export async function computeSystem(): Promise<SystemResponse> {
+  const v = (await vectorStatus().catch(() => ({}))) as Record<string, any>;
   const events = readEvents();
   const hints = events.filter((e) => e.type === 'hint');
   const ms = hints.map((e) => Number(e.ms)).filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
@@ -86,5 +88,16 @@ export function computeSystem(): SystemResponse {
     bandit: loadBandit(),
     traces,
     log: events.slice(-40).reverse().map((e) => ({ ts: e.ts, type: e.type, summary: summary(e) })),
+    memory: {
+      state: String(v.state ?? 'off'),
+      backend: v.backend === 'qdrant' ? 'qdrant' : 'keyword',
+      model: String(v.model ?? ''),
+      dims: Number(v.dims ?? 0),
+      url: v.qdrant?.url ?? null,
+      managed: !!v.qdrant?.managed,
+      notes: v.collections?.nudge_notes ?? null,
+      moments: v.collections?.nudge_attempts ?? null,
+      lastSync: v.lastSync ?? null,
+    },
   };
 }

@@ -2,9 +2,10 @@
 // Pipeline diagram with an animated signal, Thompson-sampling belief curves, real agent traces,
 // a raw skill file and the event log.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { api, errMsg } from './api';
 import Svg, { G, Line, Path, Text as SvgText } from 'react-native-svg';
-import type { BrainResponse, HintStyle, SystemResponse, Topic, TraceStep } from './contract';
+import type { BrainResponse, HintStyle, SystemResponse, Topic, TraceStep, VectorSearchResponse } from './contract';
 import { colors, ff } from './theme';
 
 const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
@@ -58,6 +59,12 @@ export function TechView({ sys, brain, width }: { sys: SystemResponse; brain: Br
         <Pipeline sys={sys} />
       </Section>
       <Section
+        title="Long-term memory (Qdrant)"
+        sub="Every note and every past struggle is embedded and stored in a local vector database. Before each hint the tutor looks up the moments closest in meaning. Try it: type what a child might say."
+      >
+        <MemorySearch sys={sys} />
+      </Section>
+      <Section
         title="Thompson sampling: which hint style to try"
         sub="Each curve is the agent's belief about how often a hint style helps (Beta(α, β)). Before every hint it samples from these and picks the winner; every outcome updates α or β."
       >
@@ -109,6 +116,10 @@ function StatusStrip({ sys }: { sys: SystemResponse }) {
     { k: 'tutor', v: sys.models.tutor },
     { k: 'voice', v: sys.voice ? `${sys.models.tts} · ${sys.models.stt}` : 'off' },
     { k: 'turn latency', v: sys.latency.avgMs ? `${(sys.latency.avgMs / 1000).toFixed(1)}s avg · p90 ${((sys.latency.p90Ms ?? 0) / 1000).toFixed(1)}s` : '—' },
+    {
+      k: 'memory',
+      v: sys.memory?.backend === 'qdrant' ? `qdrant · ${sys.memory.notes ?? 0} notes · ${sys.memory.moments ?? 0} moments` : `keyword (${sys.memory?.state ?? 'off'})`,
+    },
     { k: 'events', v: String(sys.counts.events) },
   ];
   return (
@@ -139,6 +150,14 @@ function Pipeline({ sys }: { sys: SystemResponse }) {
     { icon: '📸', title: 'Input', detail: 'Photo, example or textbook chapter', tint: '#EAF4FF' },
     { icon: '🧮', title: 'Solver', detail: 'Reads the problem, solves it, checks the maths with mathjs', mono: sys.models.solver, metric: `${sys.counts.problems} problems`, tint: '#F1ECFB' },
     { icon: '🔒', title: 'Answer vault', detail: 'The answer stays on the server. The app never receives it.', metric: 'never sent', tint: '#FFF4D6' },
+    {
+      icon: '🗂️',
+      title: 'Long-term memory',
+      detail: 'Finds past struggles closest in meaning to this moment, and which hint helped then',
+      mono: sys.memory ? `Qdrant · ${sys.memory.model} · ${sys.memory.dims}-d vectors` : 'keyword recall',
+      metric: sys.memory?.backend === 'qdrant' ? `${(sys.memory.notes ?? 0) + (sys.memory.moments ?? 0)} vectors` : 'keyword mode',
+      tint: '#E3F4FF',
+    },
     { icon: '🤖', title: 'Tutor agent', detail: 'Tool-use loop, max 2 steps per turn', mono: sys.tools.join(' · '), metric: `${sys.counts.hints} hints`, tint: '#F1ECFB' },
     { icon: '🎰', title: 'Strategy', detail: 'Thompson sampling picks the hint style; the agent can override with a reason', tint: '#E8F7EF' },
     { icon: '🛡️', title: 'Leak guard', detail: 'Every reply, visual and trace is checked for the answer (digits, words, fractions, units)', metric: `${sys.counts.leaksBlocked} blocked`, tint: '#FFECEF' },
@@ -146,7 +165,7 @@ function Pipeline({ sys }: { sys: SystemResponse }) {
     { icon: '🔊', title: 'Voice', detail: 'ElevenLabs speech in and out', mono: `${sys.models.stt} → ${sys.models.tts}`, tint: '#EAF4FF' },
   ];
   const after: Node[] = [
-    { icon: '🪞', title: 'Reflection', detail: 'Reads the session log, writes memory notes about the child', metric: `${sys.counts.memory} notes`, tint: '#FFF4D6' },
+    { icon: '🪞', title: 'Reflection', detail: 'Reads the session log, writes memory notes about the child and indexes them in Qdrant', metric: `${sys.counts.memory} notes`, tint: '#FFF4D6' },
     { icon: '🧠', title: 'Self-improver', detail: 'Rewrites its own skill files, saves visuals that worked', metric: `${sys.counts.skills} skills · ${sys.counts.recipes} visuals · ${sys.counts.upgrades} upgrades`, tint: '#F1ECFB' },
     { icon: '🗓️', title: 'Planner', detail: 'Chooses the next lesson and a warm-up', tint: '#E8F7EF' },
   ];
@@ -195,6 +214,83 @@ function Flow({ nodes }: { nodes: Node[] }) {
           </View>
         </View>
       ))}
+    </View>
+  );
+}
+
+// ---------------- long-term memory: live semantic search
+
+const EXAMPLES = ['he added the bottom numbers', 'I don\'t know how to start', 'pictures help him'];
+
+function MemorySearch({ sys }: { sys: SystemResponse }) {
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState<VectorSearchResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const ready = sys.memory?.backend === 'qdrant';
+  const run = async (text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setQ(t);
+    setBusy(true);
+    setErr(null);
+    try {
+      setRes(await api.vectorSearch(t));
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={styles.memStatus}>
+        <View style={[styles.liveDot, !ready && { backgroundColor: DIM }]} />
+        <Text style={styles.memStatusText}>
+          {ready ? `${sys.memory.managed ? 'local' : 'remote'} Qdrant · ${sys.memory.model} (${sys.memory.dims}-d) · ${sys.memory.notes ?? 0} notes · ${sys.memory.moments ?? 0} past moments` : `vector memory ${sys.memory?.state ?? 'off'}: using keyword recall`}
+        </Text>
+      </View>
+      <View style={styles.searchRow}>
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          onSubmitEditing={() => run(q)}
+          placeholder="what the child said…"
+          placeholderTextColor="#A3A3A3"
+          style={styles.searchInput}
+          editable={ready}
+          returnKeyType="search"
+        />
+        <Pressable onPress={() => run(q)} disabled={!ready || busy} style={[styles.searchBtn, (!ready || busy) && { opacity: 0.5 }]}>
+          <Text style={styles.searchBtnText}>{busy ? '…' : 'RECALL'}</Text>
+        </Pressable>
+      </View>
+      <View style={styles.chips}>
+        {EXAMPLES.map((e) => (
+          <Pressable key={e} onPress={() => run(e)} disabled={!ready} style={styles.chip}>
+            <Text style={styles.chipText}>"{e}"</Text>
+          </Pressable>
+        ))}
+      </View>
+      {err && <Text style={[styles.sectionSub, { color: colors.red }]}>{err}</Text>}
+      {res && (
+        <View style={{ gap: 8 }}>
+          {res.notes.length === 0 && <Text style={styles.sectionSub}>Nothing close in meaning yet.</Text>}
+          {res.notes.map((n, i) => (
+            <View key={i} style={styles.hit}>
+              <View style={styles.hitHead}>
+                <Text style={styles.hitScore}>{n.score.toFixed(2)}</Text>
+                <View style={styles.hitTrack}>
+                  <View style={[styles.hitFill, { width: `${Math.max(4, Math.min(100, n.score * 100))}%` }]} />
+                </View>
+                <Text style={styles.hitKind}>{n.kind}</Text>
+              </View>
+              <Text style={styles.hitText}>{n.text}</Text>
+            </View>
+          ))}
+          {res.notes.length > 0 && <Text style={styles.axisNote}>cosine similarity · matched by meaning, not keywords</Text>}
+        </View>
+      )}
     </View>
   );
 }
@@ -431,6 +527,22 @@ const styles = StyleSheet.create({
   armName: { fontFamily: ff.black, fontSize: 12, color: colors.ink },
   armMono: { fontFamily: MONO, fontSize: 11, color: colors.inkSoft },
 
+  memStatus: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F5F8FC', borderRadius: 10, padding: 8 },
+  memStatusText: { flex: 1, fontFamily: MONO, fontSize: 11, color: colors.ink },
+  searchRow: { flexDirection: 'row', gap: 8 },
+  searchInput: { flex: 1, borderWidth: 1.5, borderColor: '#E3E3E3', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, fontFamily: ff.bold, fontSize: 14, color: colors.ink },
+  searchBtn: { backgroundColor: '#1C83C6', borderRadius: 12, paddingHorizontal: 14, justifyContent: 'center' },
+  searchBtnText: { fontFamily: ff.black, color: '#fff', fontSize: 12, letterSpacing: 0.8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { backgroundColor: '#F2F2F2', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 },
+  chipText: { fontFamily: ff.bold, fontSize: 12, color: colors.inkSoft },
+  hit: { gap: 4 },
+  hitHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  hitScore: { fontFamily: MONO, fontSize: 12, color: colors.ink, width: 34 },
+  hitTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: '#EFEFEF', overflow: 'hidden' },
+  hitFill: { height: '100%', borderRadius: 3, backgroundColor: '#1C83C6' },
+  hitKind: { fontFamily: MONO, fontSize: 11, color: colors.inkSoft },
+  hitText: { fontFamily: ff.bold, fontSize: 13, color: colors.ink, lineHeight: 18 },
   mono: { fontFamily: MONO, fontSize: 12, color: INK, lineHeight: 18 },
   traceTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   traceTab: { borderRadius: 7, paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#20263A' },
