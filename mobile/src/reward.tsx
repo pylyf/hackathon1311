@@ -51,7 +51,12 @@ export function Reward({ kind, onDone }: { kind: 'step' | 'solved'; onDone: () =
   const size = big ? 340 : 260;
   const otter = big ? 170 : 130;
   return (
-    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.wrap, { opacity: fade }]}>
+    <Animated.View
+      // catch every tap so nothing underneath (like the mic) gets pressed during the celebration
+      onStartShouldSetResponder={() => true}
+      onResponderRelease={onDone}
+      style={[StyleSheet.absoluteFill, styles.wrap, { opacity: fade }]}
+    >
       {big && <Confetti count={70} />}
       <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
         <Animated.View

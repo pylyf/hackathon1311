@@ -420,6 +420,17 @@ export interface BrainChange {
   kind: 'skill-created' | 'skill-updated' | 'recipe-created' | 'note';
   title: string;
   why: string;
+  before?: string; // skill body before this change (skill-updated)
+  after?: string;  // skill body after this change
+}
+
+// GET /insights — numbers for the parent's "Nudge's brain" charts
+export interface InsightsResponse {
+  sessions: number;
+  problems: { ts: string; topic: Topic; hints: number; solved: boolean; seconds: number | null }[]; // oldest first
+  styles: Record<HintStyle, { used: number; helped: number }>; // how often each hint style was tried / led to progress
+  leaksBlocked: number; // replies the guard stopped because they gave the answer away
+  visualsShown: number;
 }
 export interface BrainResponse {
   skills: Skill[];
@@ -429,6 +440,20 @@ export interface BrainResponse {
 
 // GET /problem/:id/scene — the "Show me" explainer prepared ahead of time
 export interface PreparedSceneResponse { scene: SceneSpec | null; ready: boolean }
+
+// GET /system — "under the hood" view for parents / judges
+export interface SystemResponse {
+  live: boolean;                // real Claude (false = mock mode)
+  voice: boolean;               // ElevenLabs on
+  models: { solver: string; tutor: string; tts: string; stt: string };
+  tools: string[];              // the tutor agent's tools
+  blocks: string[];             // GenUI building blocks Claude can use
+  counts: { events: number; problems: number; hints: number; visuals: number; leaksBlocked: number; skills: number; recipes: number; upgrades: number; memory: number };
+  latency: { avgMs: number | null; p90Ms: number | null; samples: number };
+  bandit: BanditState;          // Beta(alpha, beta) per topic x hint style (Thompson sampling)
+  traces: { ts: string; topic: Topic; style: HintStyle; level: HintLevel; ms?: number; text: string; ui: string | null; steps: TraceStep[] }[]; // latest agent turns
+  log: { ts: string; type: string; summary: string }[]; // latest events, newest first
+}
 
 // ---------- Learning state ----------
 

@@ -58,15 +58,6 @@ export default function ResultScreen({
           </Pop>
         </View>
 
-        <View style={styles.learnCard}>
-          <Text style={{ fontSize: 30 }}>🧠</Text>
-          <Text style={styles.learnText}>
-            {hints === 0
-              ? "You didn't even need a hint! I'll remember you're ready for harder ones."
-              : `I'm noting which of my ${hints} hint${hints > 1 ? 's' : ''} helped you, so I can teach you better next time.`}
-          </Text>
-        </View>
-
         {error && <ErrorBox message={error} />}
       </ScrollView>
 

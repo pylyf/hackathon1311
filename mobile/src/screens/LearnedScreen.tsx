@@ -1,92 +1,60 @@
-// "Nudge's brain": what the agent knows about the child, the skills it wrote for itself,
-// the visual recipes it invented, and a changelog of how it improved.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+// "Nudge's brain" — the parent-facing dashboard. The child never sees this.
+// It shows how the agent is improving itself: fewer hints over time, the skills it rewrote (as diffs),
+// what helps this child, and what it knows about them.
+import React, { useCallback, useEffect, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { api, errMsg } from '../api';
-import type { BrainChange, BrainResponse, Curriculum, HintStyle, LearnedResponse, MemoryNote, SessionEndResponse, Skill, Topic } from '../contract';
+import type { BrainChange, BrainResponse, ChildProfile, Curriculum, InsightsResponse, LearnedResponse, MemoryNote, SessionEndResponse, SystemResponse } from '../contract';
+import { TechView } from '../tech';
+import { CHART, HintsChart, SkillDiff, StyleBars, UpgradeTimeline } from '../charts';
 import { Icon, TOPIC } from '../game';
 import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { colors, ff, font } from '../theme';
-import { ErrorBox, Loading, Mascot, SpeechBubble, BubbleText, TopBar } from '../ui';
-
-type Tab = 'you' | 'skills' | 'visuals' | 'changes';
-const TABS: { key: Tab; label: string; icon: string }[] = [
-  { key: 'you', label: 'You', icon: 'account-heart' },
-  { key: 'skills', label: 'Skills', icon: 'brain' },
-  { key: 'visuals', label: 'Visuals', icon: 'palette' },
-  { key: 'changes', label: 'Changes', icon: 'history' },
-];
-
-const STYLES: HintStyle[] = ['verbal', 'visual', 'story', 'smaller-numbers'];
-const STYLE_LABEL: Record<HintStyle, string> = { verbal: '💬 Talking', visual: '🎨 Pictures', story: '📖 Stories', 'smaller-numbers': '🔢 Small numbers' };
-const STYLE_COLORS: Record<HintStyle, string> = { verbal: colors.blue, visual: colors.green, story: colors.purple, 'smaller-numbers': colors.primary };
-const KIND: Record<MemoryNote['kind'], { icon: string; label: string; color: string }> = {
-  misconception: { icon: '🤔', label: 'Tricky for you', color: colors.red },
-  works: { icon: '✅', label: 'Works for you', color: colors.green },
-  'doesnt-work': { icon: '🚫', label: "Doesn't help", color: colors.inkSoft },
-  interest: { icon: '⭐', label: 'You love', color: colors.yellowDark },
-  mastered: { icon: '🏆', label: 'Mastered', color: colors.purple },
-};
-const CHANGE_ICON: Record<BrainChange['kind'], { icon: string; color: string; verb: string }> = {
-  'skill-created': { icon: 'creation', color: colors.purple, verb: 'Wrote a new skill' },
-  'skill-updated': { icon: 'pencil', color: colors.blue, verb: 'Improved a skill' },
-  'recipe-created': { icon: 'palette', color: colors.green, verb: 'Invented a visual' },
-  note: { icon: 'note-text', color: colors.inkSoft, verb: 'Noted' },
-};
+import { ErrorBox, Loading, Mascot, TopBar } from '../ui';
 
 type Plan = NonNullable<SessionEndResponse['plan']>;
 
-/** What the planner agent decided for next time (lessons / warm-up from the textbook curriculum). */
-function PlanCard({ plan, curriculum }: { plan: Plan; curriculum: Curriculum | null }) {
-  const next = plan.nextLessonId ? curriculum?.lessons.find((l) => l.id === plan.nextLessonId) : null;
-  return (
-    <View style={styles.plan}>
-      <Text style={styles.planTitle}>🗓️ Plan for next time</Text>
-      {plan.changes.map((c, i) => (
-        <Text key={i} style={styles.planLine}>
-          • {c}
-        </Text>
-      ))}
-      {plan.nextLessonId && (
-        <Text style={styles.planLine}>
-          <Text style={styles.bold}>Next lesson: </Text>
-          {next?.title ?? plan.nextLessonId}
-        </Text>
-      )}
-      {plan.warmup && (
-        <Text style={styles.planLine}>
-          <Text style={styles.bold}>🔥 Warm-up: </Text>
-          {plan.warmup.message}
-        </Text>
-      )}
-    </View>
-  );
-}
+const KIND: Record<MemoryNote['kind'], { icon: string; label: string }> = {
+  misconception: { icon: '🤔', label: 'Tricky' },
+  works: { icon: '✅', label: 'Works' },
+  'doesnt-work': { icon: '🚫', label: "Doesn't help" },
+  interest: { icon: '⭐', label: 'Loves' },
+  mastered: { icon: '🏆', label: 'Mastered' },
+};
+const CHANGE: Record<BrainChange['kind'], { label: string; color: string }> = {
+  'skill-created': { label: 'Wrote a new skill', color: CHART.upgrade },
+  'skill-updated': { label: 'Rewrote a skill', color: CHART.series },
+  'recipe-created': { label: 'Saved a visual that worked', color: CHART.recipe },
+  note: { label: 'Note', color: colors.inkSoft },
+};
 
-export default function LearnedScreen({
-  newNotes,
-  changes: fresh,
-  plan,
-  curriculum,
-  onBack,
-}: {
-  newNotes?: MemoryNote[];
-  changes?: BrainChange[];
-  plan?: Plan;
-  curriculum?: Curriculum | null;
-  onBack: () => void;
-}) {
-  const [tab, setTab] = useState<Tab>(fresh?.length ? 'changes' : 'you');
+export default function LearnedScreen({ plan, curriculum, onBack }: { newNotes?: MemoryNote[]; changes?: BrainChange[]; plan?: Plan; curriculum?: Curriculum | null; onBack: () => void }) {
+  const { width: winW } = useWindowDimensions();
+  const cardW = Math.min(winW, 720) - 32 - 32; // screen padding + card padding
   const [learned, setLearned] = useState<LearnedResponse | null>(null);
   const [brain, setBrain] = useState<BrainResponse | null>(null);
+  const [ins, setIns] = useState<InsightsResponse | null>(null);
+  const [profile, setProfile] = useState<ChildProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openSkill, setOpenSkill] = useState<string | null>(null);
+  const [view, setView] = useState<'parent' | 'tech'>('parent');
+  const [sys, setSys] = useState<SystemResponse | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [l, b] = await Promise.all([api.learned(), api.brain()]);
+      const [l, b, i, p, y] = await Promise.all([
+        api.learned(),
+        api.brain(),
+        api.insights(),
+        api.profile().catch(() => ({ profile: null })),
+        api.system().catch(() => null),
+      ]);
+      setSys(y);
       setLearned(l);
       setBrain(b);
+      setIns(i);
+      setProfile(p.profile);
     } catch (e) {
       setError(errMsg(e));
     }
@@ -95,238 +63,224 @@ export default function LearnedScreen({
     load();
   }, [load]);
 
-  const headline = fresh?.length
-    ? `I just improved myself ${fresh.length} way${fresh.length > 1 ? 's' : ''}! Look!`
-    : newNotes?.length
-      ? 'I learned new things about you today!'
-      : 'This is my brain. I rewrite it after every session to teach you better!';
+  const name = profile?.name?.split(' ')[0] ?? 'your child';
+  const ready = learned && brain && ins;
+
+  // headline numbers
+  const solved = ins?.problems.filter((p) => p.solved) ?? [];
+  const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  const firstAvg = avg(solved.slice(0, 3).map((p) => p.hints));
+  const lastAvg = avg(solved.slice(-3).map((p) => p.hints));
+  const upgrades = brain?.changes.filter((c) => c.kind !== 'note') ?? [];
 
   return (
     <View style={{ flex: 1 }}>
       <TopBar title="Nudge's brain" onBack={onBack} />
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.hero}>
-          <Mascot mood={fresh?.length ? 'excited' : 'love'} size={96} />
-          <SpeechBubble style={{ flex: 1 }}>
-            <BubbleText>{headline}</BubbleText>
-          </SpeechBubble>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={styles.kicker}>FOR PARENTS</Text>
+            <Text style={styles.title}>How Nudge is learning to teach {name}</Text>
+            <Text style={styles.sub}>After every session Nudge reviews what happened and rewrites its own teaching playbook.</Text>
+          </View>
+          <Mascot mood="pebble" size={84} />
         </View>
 
-        {plan && <PlanCard plan={plan} curriculum={curriculum ?? null} />}
-
-        {brain && learned && (
-          <View style={styles.counts}>
-            <Count n={learned.memory.length} label="things about you" color={colors.yellowDark} icon="account-heart" />
-            <Count n={brain.skills.length} label="skills I wrote" color={colors.purple} icon="brain" />
-            <Count n={brain.recipes.length} label="visuals I made" color={colors.green} icon="palette" />
-          </View>
-        )}
-
-        <View style={styles.tabs}>
-          {TABS.map((t) => {
-            const on = t.key === tab;
-            return (
-              <Pressable key={t.key} onPress={() => setTab(t.key)} style={[styles.tab, on && styles.tabOn]}>
-                <Icon name={t.icon as never} size={18} color={on ? '#fff' : colors.inkSoft} />
-                <Text style={[styles.tabText, on && { color: '#fff' }]}>{t.label}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.toggle}>
+          {(
+            [
+              ['parent', '👪  Parent view'],
+              ['tech', '⚙️  Under the hood'],
+            ] as const
+          ).map(([k, label]) => (
+            <Pressable key={k} onPress={() => setView(k)} style={[styles.toggleBtn, view === k && styles.toggleOn]} accessibilityRole="button">
+              <Text style={[styles.toggleText, view === k && styles.toggleTextOn]}>{label}</Text>
+            </Pressable>
+          ))}
         </View>
 
         {error && <ErrorBox message={error} onRetry={load} />}
-        {(!learned || !brain) && !error && <Loading label="Opening my brain…" />}
+        {!ready && !error && <Loading label="Opening my brain…" />}
 
-        {learned && brain && tab === 'you' && <AboutYou learned={learned} newNotes={newNotes} />}
-        {brain && tab === 'skills' && <Skills skills={brain.skills} />}
-        {brain && tab === 'visuals' && <Visuals brain={brain} />}
-        {brain && tab === 'changes' && <Changes changes={brain.changes} freshCount={fresh?.length ?? 0} />}
+        {ready && view === 'tech' && (sys ? <TechView sys={sys} brain={brain!} width={cardW} /> : <Text style={styles.empty}>The server does not expose /system yet.</Text>)}
+
+        {ready && view === 'parent' && (
+          <>
+            {/* headline numbers */}
+            <View style={styles.tiles}>
+              <Tile value={`${solved.length}`} label="problems solved" sub={`${ins!.sessions} sessions`} />
+              <Tile
+                value={solved.length >= 4 ? `${firstAvg.toFixed(1)} → ${lastAvg.toFixed(1)}` : avg(solved.map((p) => p.hints)).toFixed(1)}
+                label="hints per problem"
+                sub={solved.length >= 4 ? 'first 3 vs last 3' : 'average so far'}
+                good={solved.length >= 4 && lastAvg < firstAvg}
+              />
+              <Tile value={`${upgrades.length}`} label="self-upgrades" sub={`${brain!.skills.length} skills · ${brain!.recipes.length} visuals`} accent={CHART.upgrade} />
+              <Tile value={`${ins!.leaksBlocked}`} label="answers kept secret" sub="replies rewritten so the answer never slipped out" />
+            </View>
+
+            {/* chart: hints over time, with upgrade markers */}
+            <Card title="Fewer hints needed over time" sub="Hints Nudge needed per problem (faint dots), smoothed. Purple marks are moments it rewrote its own skills.">
+              <HintsChart problems={ins!.problems} changes={brain!.changes} width={cardW} />
+              <View style={styles.legend}>
+                <Legend color={CHART.series} label="avg of last 3 problems" />
+                <Legend color={CHART.axis} label="trend" dashed />
+                <Legend color={CHART.upgrade} label="Nudge rewrote its skills" />
+              </View>
+            </Card>
+
+            {/* what it changed in itself */}
+            <Card title="What Nudge changed in itself" sub="Every change it made to its own teaching, and why.">
+              <UpgradeTimeline changes={brain!.changes} width={cardW} />
+              <View style={[styles.legend, { marginBottom: 6 }]}>
+                <Legend color={CHART.upgrade} label="new skill" />
+                <Legend color={CHART.series} label="rewrote skill" />
+                <Legend color={CHART.recipe} label="saved visual" />
+              </View>
+              {upgrades.length === 0 && <Text style={styles.empty}>No upgrades yet. They appear after the first finished session.</Text>}
+              {upgrades.slice(0, 6).map((c, i) => (
+                <View key={i} style={[styles.change, i > 0 && styles.divider]}>
+                  <View style={styles.changeHead}>
+                    <View style={[styles.dot, { backgroundColor: CHANGE[c.kind].color }]} />
+                    <Text style={[styles.changeKind, { color: CHANGE[c.kind].color }]}>{CHANGE[c.kind].label.toUpperCase()}</Text>
+                    <Text style={styles.when}>{ago(c.ts)}</Text>
+                  </View>
+                  <Text style={styles.changeTitle}>{c.title}</Text>
+                  <Text style={styles.why}>
+                    <Text style={styles.whyLabel}>Why: </Text>
+                    {c.why}
+                  </Text>
+                  {(c.before || c.after) && (
+                    <View style={styles.diffBox}>
+                      <SkillDiff before={c.before} after={c.after} />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </Card>
+
+            {/* what helps */}
+            <Card title={`What helps ${name}`} sub="Share of each kind of hint that led to progress within two turns.">
+              <StyleBars styles={ins!.styles} />
+            </Card>
+
+            {/* the skills themselves */}
+            <Card title="Skills Nudge wrote for itself" sub="Its own playbook, read before every session.">
+              {brain!.skills.length === 0 && <Text style={styles.empty}>None yet.</Text>}
+              {brain!.skills.map((s, i) => {
+                const open = openSkill === s.id;
+                const t = s.topic === 'any' ? null : TOPIC[s.topic];
+                return (
+                  <Pressable key={s.id} onPress={() => setOpenSkill(open ? null : s.id)} style={[styles.skill, i > 0 && styles.divider]}>
+                    <View style={styles.changeHead}>
+                      <Text style={{ fontSize: 18 }}>{t?.emoji ?? '🧠'}</Text>
+                      <Text style={[styles.changeTitle, { flex: 1 }]} numberOfLines={open ? undefined : 1}>
+                        {s.title}
+                      </Text>
+                      <View style={styles.version}>
+                        <Text style={styles.versionText}>v{s.version}</Text>
+                      </View>
+                      <Icon name={open ? 'chevron-up' : 'chevron-down'} size={20} color={CHART.axis} />
+                    </View>
+                    {open && (
+                      <View style={{ gap: 4, marginTop: 6 }}>
+                        <Text style={styles.why}>Use when: {s.whenToUse}</Text>
+                        {s.body
+                          .split('\n')
+                          .map((l) => l.replace(/^[-*•]\s*/, '').trim())
+                          .filter(Boolean)
+                          .map((l, k) => (
+                            <Text key={k} style={styles.bullet}>
+                              • {l}
+                            </Text>
+                          ))}
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </Card>
+
+            {/* memory */}
+            <Card title={`What Nudge knows about ${name}`}>
+              {learned!.memory.length === 0 && <Text style={styles.empty}>Nothing yet.</Text>}
+              <View style={styles.notes}>
+                {learned!.memory.slice(0, 12).map((n) => (
+                  <View key={n.id} style={styles.note}>
+                    <Text style={styles.noteKind}>
+                      {KIND[n.kind]?.icon} {KIND[n.kind]?.label}
+                    </Text>
+                    <Text style={styles.noteText}>{n.text}</Text>
+                  </View>
+                ))}
+              </View>
+            </Card>
+
+            {brain!.recipes.length > 0 && (
+              <Card title="Visuals Nudge saved" sub="Pictures that worked, reused on similar problems.">
+                {brain!.recipes.slice(0, 3).map((r) => (
+                  <View key={r.id} style={{ gap: 6, marginBottom: 10 }}>
+                    <Text style={styles.why}>
+                      {r.title} · used {r.uses}×
+                    </Text>
+                    <GenUIRenderer spec={r.scene} maxWidth={cardW} readOnly />
+                  </View>
+                ))}
+              </Card>
+            )}
+
+            {plan && (
+              <Card title="Plan for next time">
+                {plan.changes.map((c, i) => (
+                  <Text key={i} style={styles.bullet}>
+                    • {c}
+                  </Text>
+                ))}
+                {plan.nextLessonId && (
+                  <Text style={styles.bullet}>• Next lesson: {curriculum?.lessons.find((l) => l.id === plan.nextLessonId)?.title ?? plan.nextLessonId}</Text>
+                )}
+              </Card>
+            )}
+          </>
+        )}
       </ScrollView>
     </View>
   );
 }
 
-function Count({ n, label, color, icon }: { n: number; label: string; color: string; icon: string }) {
+function Tile({ value, label, sub, good, accent }: { value: string; label: string; sub?: string; good?: boolean; accent?: string }) {
   return (
-    <View style={[styles.count, { borderColor: color }]}>
-      <Icon name={icon as never} size={20} color={color} />
-      <Text style={[styles.countNum, { color }]}>{n}</Text>
-      <Text style={styles.countLabel}>{label}</Text>
+    <View style={styles.tile}>
+      <Text style={[styles.tileValue, accent ? { color: accent } : null, good ? { color: colors.greenDark } : null]} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      <Text style={styles.tileLabel}>{label}</Text>
+      {sub ? (
+        <Text style={styles.tileSub} numberOfLines={2}>
+          {sub}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
-function Empty({ text }: { text: string }) {
+function Card({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
   return (
-    <View style={styles.empty}>
-      <Mascot mood="sleepy" size={110} />
-      <Text style={styles.emptyText}>{text}</Text>
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      {sub ? <Text style={styles.cardSub}>{sub}</Text> : null}
+      <View style={{ marginTop: 10 }}>{children}</View>
     </View>
   );
 }
 
-// ---------------------------------------------------------------- tabs
-
-function AboutYou({ learned, newNotes }: { learned: LearnedResponse; newNotes?: MemoryNote[] }) {
-  const freshIds = new Set((newNotes ?? []).map((n) => n.id));
-  const byKind = (Object.keys(KIND) as MemoryNote['kind'][]).map((k) => ({ k, notes: learned.memory.filter((n) => n.kind === k) })).filter((g) => g.notes.length);
+function Legend({ color, label, dashed }: { color: string; label: string; dashed?: boolean }) {
   return (
-    <View style={{ gap: 14 }}>
-      {byKind.length === 0 && <Empty text="I don't know much about you yet. Solve a problem with me!" />}
-      {byKind.map(({ k, notes }) => (
-        <View key={k} style={styles.noteGroup}>
-          <Text style={[styles.groupTitle, { color: KIND[k].color }]}>
-            {KIND[k].icon} {KIND[k].label.toUpperCase()}
-          </Text>
-          {notes.map((n, i) => (
-            <SlideIn key={n.id} delay={i * 60}>
-              <View style={[styles.note, freshIds.has(n.id) && styles.noteNew]}>
-                <Text style={styles.noteText}>{n.text}</Text>
-                <View style={styles.noteMeta}>
-                  {n.topic !== 'any' && <Text style={[styles.topicChip, { color: TOPIC[n.topic].dark, backgroundColor: TOPIC[n.topic].light }]}>{TOPIC[n.topic].label}</Text>}
-                  {n.seen > 1 && <Text style={styles.seen}>seen {n.seen}×</Text>}
-                  {freshIds.has(n.id) && <Text style={styles.newTag}>NEW</Text>}
-                </View>
-              </View>
-            </SlideIn>
-          ))}
-        </View>
-      ))}
-
-      <View style={styles.card}>
-        <Text style={styles.h3}>Which hints help you most</Text>
-        {(Object.keys(learned.bandit) as Topic[]).map((topic) => {
-          const arms = learned.bandit[topic];
-          if (!arms) return null;
-          return (
-            <View key={topic} style={{ gap: 6, marginTop: 10 }}>
-              <Text style={[styles.topicChip, { color: TOPIC[topic].dark, backgroundColor: TOPIC[topic].light }]}>
-                {TOPIC[topic].emoji} {TOPIC[topic].label}
-              </Text>
-              {STYLES.map((s) => {
-                const [a, b] = arms[s] ?? [1, 1];
-                const rate = a / Math.max(1e-9, a + b);
-                return (
-                  <View key={s} style={styles.barRow}>
-                    <Text style={styles.barLabel}>{STYLE_LABEL[s]}</Text>
-                    <View style={styles.barTrack}>
-                      <GrowWidth pct={rate} color={STYLE_COLORS[s]} />
-                    </View>
-                    <Text style={styles.barPct}>{Math.round(rate * 100)}%</Text>
-                  </View>
-                );
-              })}
-            </View>
-          );
-        })}
-      </View>
+    <View style={styles.legendItem}>
+      <View style={[styles.legendSwatch, { backgroundColor: dashed ? 'transparent' : color, borderColor: color, borderStyle: dashed ? 'dashed' : 'solid' }]} />
+      <Text style={styles.legendText}>{label}</Text>
     </View>
   );
-}
-
-function Skills({ skills }: { skills: Skill[] }) {
-  if (!skills.length) return <Empty text="I haven't written any skills yet. After our first session I'll write my own teaching playbook for you!" />;
-  return (
-    <View style={{ gap: 12 }}>
-      {skills.map((s, i) => {
-        const t = s.topic === 'any' ? null : TOPIC[s.topic];
-        return (
-          <SlideIn key={s.id} delay={i * 80}>
-            <View style={[styles.skill, { borderLeftColor: t?.color ?? colors.purple }]}>
-              <View style={styles.skillHead}>
-                <Text style={styles.skillIcon}>{t?.emoji ?? '🧠'}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.skillTitle}>{s.title}</Text>
-                  <Text style={styles.skillWhen}>Use when: {s.whenToUse}</Text>
-                </View>
-                <View style={styles.version}>
-                  <Text style={styles.versionText}>v{s.version}</Text>
-                </View>
-              </View>
-              <View style={styles.skillBody}>
-                {s.body
-                  .split('\n')
-                  .map((l) => l.replace(/^[-*•]\s*/, '').trim())
-                  .filter(Boolean)
-                  .map((l, k) => (
-                    <View key={k} style={styles.bullet}>
-                      <View style={[styles.bulletDot, { backgroundColor: t?.color ?? colors.purple }]} />
-                      <Text style={styles.bulletText}>{l}</Text>
-                    </View>
-                  ))}
-              </View>
-              <Text style={styles.updated}>Updated {ago(s.updatedAt)}</Text>
-            </View>
-          </SlideIn>
-        );
-      })}
-    </View>
-  );
-}
-
-function Visuals({ brain }: { brain: BrainResponse }) {
-  if (!brain.recipes.length) return <Empty text="When a picture really helps you, I save it here as a recipe and reuse it next time." />;
-  return (
-    <View style={{ gap: 16 }}>
-      {brain.recipes.map((r) => (
-        <View key={r.id} style={{ gap: 6 }}>
-          <View style={styles.recipeHead}>
-            <Text style={styles.recipeTitle}>{r.title}</Text>
-            <Text style={styles.seen}>used {r.uses}×</Text>
-          </View>
-          <Text style={styles.skillWhen}>Use when: {r.whenToUse}</Text>
-          <GenUIRenderer spec={r.scene} maxWidth={480} />
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function Changes({ changes, freshCount }: { changes: BrainChange[]; freshCount: number }) {
-  if (!changes.length) return <Empty text="Nothing changed yet. Finish a session and watch me upgrade myself!" />;
-  return (
-    <View style={{ gap: 0 }}>
-      {changes.map((c, i) => {
-        const m = CHANGE_ICON[c.kind];
-        return (
-          <SlideIn key={i} delay={i * 70}>
-            <View style={styles.change}>
-              <View style={styles.timeline}>
-                <View style={[styles.changeDot, { backgroundColor: m.color }]}>
-                  <Icon name={m.icon as never} size={16} color="#fff" />
-                </View>
-                {i < changes.length - 1 && <View style={styles.timelineLine} />}
-              </View>
-              <View style={[styles.changeCard, i < freshCount && styles.noteNew]}>
-                <Text style={[styles.changeVerb, { color: m.color }]}>{m.verb.toUpperCase()}</Text>
-                <Text style={styles.changeTitle}>{c.title}</Text>
-                <Text style={styles.changeWhy}>{c.why}</Text>
-                <Text style={styles.updated}>{ago(c.ts)}</Text>
-              </View>
-            </View>
-          </SlideIn>
-        );
-      })}
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------- motion helpers
-
-function SlideIn({ delay, children }: { delay: number; children: React.ReactNode }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(v, { toValue: 1, duration: 380, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, [v, delay]);
-  return <Animated.View style={{ opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}>{children}</Animated.View>;
-}
-
-function GrowWidth({ pct, color }: { pct: number; color: string }) {
-  const v = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(v, { toValue: pct, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
-  }, [v, pct]);
-  return <Animated.View style={{ height: '100%', borderRadius: 8, backgroundColor: color, width: v.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }} />;
 }
 
 function ago(iso: string): string {
@@ -334,61 +288,49 @@ function ago(iso: string): string {
   if (s < 90) return 'just now';
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} days ago`;
+  return `${Math.round(s / 86400)} d ago`;
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: 16, gap: 16, paddingBottom: 40 },
+  toggle: { flexDirection: 'row', backgroundColor: '#EFEFEF', borderRadius: 14, padding: 4, gap: 4 },
+  toggleBtn: { flex: 1, paddingVertical: 10, borderRadius: 11, alignItems: 'center' },
+  toggleOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
+  toggleText: { fontFamily: ff.black, fontSize: 13, color: '#9A9A9A' },
+  toggleTextOn: { color: colors.ink },
+  scroll: { padding: 16, gap: 14, paddingBottom: 40, backgroundColor: '#FAFAF9' },
   hero: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  plan: { gap: 6, backgroundColor: colors.greenLight, borderRadius: 18, padding: 14, borderWidth: 2, borderColor: '#BDEBD1' },
-  planTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.greenDark },
-  planLine: { fontFamily: ff.regular, fontSize: 15, color: colors.ink, lineHeight: 22 },
-  bold: { fontFamily: ff.black },
-  counts: { flexDirection: 'row', gap: 8 },
-  count: { flex: 1, borderWidth: 2, borderRadius: 16, padding: 10, alignItems: 'center', gap: 2, borderBottomWidth: 4 },
-  countNum: { fontFamily: ff.display, fontSize: 26 },
-  countLabel: { fontFamily: ff.bold, fontSize: 11, color: colors.inkSoft, textAlign: 'center' },
-  tabs: { flexDirection: 'row', gap: 6, backgroundColor: colors.track, borderRadius: 16, padding: 4 },
-  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 12 },
-  tabOn: { backgroundColor: colors.ink },
-  tabText: { fontFamily: ff.black, fontSize: 12, color: colors.inkSoft },
-  empty: { alignItems: 'center', gap: 8, padding: 20 },
-  emptyText: { fontFamily: ff.bold, fontSize: font.body, color: colors.inkSoft, textAlign: 'center', lineHeight: 25 },
-  noteGroup: { gap: 8 },
-  groupTitle: { fontFamily: ff.black, fontSize: 13, letterSpacing: 1 },
-  note: { borderWidth: 2, borderColor: colors.line, borderRadius: 14, padding: 12, gap: 6 },
-  noteNew: { borderColor: colors.yellow, backgroundColor: colors.yellowLight },
-  noteText: { fontFamily: ff.bold, fontSize: font.body - 1, color: colors.ink, lineHeight: 23 },
-  noteMeta: { flexDirection: 'row', gap: 6, alignItems: 'center', flexWrap: 'wrap' },
-  topicChip: { alignSelf: 'flex-start', fontFamily: ff.black, fontSize: 11, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
-  seen: { fontFamily: ff.bold, fontSize: 12, color: colors.trackText },
-  newTag: { fontFamily: ff.black, fontSize: 11, color: '#fff', backgroundColor: colors.primary, borderRadius: 6, paddingHorizontal: 6, overflow: 'hidden' },
-  card: { borderWidth: 2, borderColor: colors.line, borderBottomWidth: 4, borderRadius: 16, padding: 14 },
-  h3: { fontFamily: ff.display, fontSize: 20, color: colors.ink },
-  barRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  barLabel: { width: 128, fontFamily: ff.bold, fontSize: 14, color: colors.ink },
-  barTrack: { flex: 1, height: 14, backgroundColor: colors.track, borderRadius: 8, overflow: 'hidden' },
-  barPct: { width: 40, textAlign: 'right', fontFamily: ff.black, fontSize: 13, color: colors.ink },
-  skill: { borderWidth: 2, borderColor: colors.line, borderLeftWidth: 8, borderRadius: 16, padding: 14, gap: 10 },
-  skillHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  skillIcon: { fontSize: 30 },
-  skillTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.ink },
-  skillWhen: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft },
-  version: { backgroundColor: colors.ink, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  versionText: { fontFamily: ff.black, color: '#fff', fontSize: 12 },
-  skillBody: { gap: 6 },
-  bullet: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  bulletDot: { width: 8, height: 8, borderRadius: 4, marginTop: 7 },
-  bulletText: { flex: 1, fontFamily: ff.regular, fontSize: 15, color: colors.ink, lineHeight: 21 },
-  updated: { fontFamily: ff.bold, fontSize: 11, color: colors.trackText },
-  recipeHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  recipeTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.ink },
-  change: { flexDirection: 'row', gap: 10 },
-  timeline: { alignItems: 'center', width: 30 },
-  changeDot: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  timelineLine: { flex: 1, width: 3, backgroundColor: colors.line, marginVertical: 2 },
-  changeCard: { flex: 1, borderWidth: 2, borderColor: colors.line, borderRadius: 14, padding: 12, gap: 3, marginBottom: 12 },
-  changeVerb: { fontFamily: ff.black, fontSize: 11, letterSpacing: 1 },
-  changeTitle: { fontFamily: ff.black, fontSize: font.body - 1, color: colors.ink },
-  changeWhy: { fontFamily: ff.regular, fontSize: 14, color: colors.inkSoft, lineHeight: 20 },
+  kicker: { fontFamily: ff.black, fontSize: 11, letterSpacing: 1.2, color: CHART.upgrade },
+  title: { fontFamily: ff.display, fontSize: 24, color: colors.ink, lineHeight: 29 },
+  sub: { fontFamily: ff.regular, fontSize: 14, color: colors.inkSoft, lineHeight: 19 },
+  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  tile: { width: '48%', flexGrow: 1, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1.5, borderColor: '#ECECEC', padding: 12, gap: 1 },
+  tileValue: { fontFamily: ff.display, fontSize: 26, color: colors.ink },
+  tileLabel: { fontFamily: ff.black, fontSize: 13, color: colors.ink },
+  tileSub: { fontFamily: ff.regular, fontSize: 11, color: colors.inkSoft, lineHeight: 15 },
+  card: { backgroundColor: '#fff', borderRadius: 18, borderWidth: 1.5, borderColor: '#ECECEC', padding: 16 },
+  cardTitle: { fontFamily: ff.black, fontSize: 17, color: colors.ink },
+  cardSub: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft, marginTop: 2 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: 8 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendSwatch: { width: 14, height: 4, borderRadius: 2, borderWidth: 1.5 },
+  legendText: { fontFamily: ff.bold, fontSize: 12, color: colors.inkSoft },
+  empty: { fontFamily: ff.regular, fontSize: 14, color: colors.inkSoft },
+  change: { paddingVertical: 10, gap: 4 },
+  divider: { borderTopWidth: 1.5, borderTopColor: '#F0F0F0' },
+  changeHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  changeKind: { flex: 1, fontFamily: ff.black, fontSize: 11, letterSpacing: 0.8 },
+  when: { fontFamily: ff.bold, fontSize: 11, color: CHART.axis },
+  changeTitle: { fontFamily: ff.black, fontSize: 15, color: colors.ink },
+  why: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft, lineHeight: 18 },
+  whyLabel: { fontFamily: ff.black, color: colors.ink },
+  diffBox: { marginTop: 6, backgroundColor: '#FAFAFA', borderRadius: 10, padding: 6 },
+  skill: { paddingVertical: 10 },
+  version: { backgroundColor: '#F1ECFB', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  versionText: { fontFamily: ff.black, fontSize: 12, color: CHART.upgrade },
+  bullet: { fontFamily: ff.regular, fontSize: 14, color: colors.ink, lineHeight: 20 },
+  notes: { gap: 8 },
+  note: { gap: 1 },
+  noteKind: { fontFamily: ff.black, fontSize: 11, color: colors.inkSoft, letterSpacing: 0.6 },
+  noteText: { fontFamily: ff.bold, fontSize: 14, color: colors.ink, lineHeight: 19 },
 });

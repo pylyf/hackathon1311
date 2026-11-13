@@ -253,12 +253,13 @@ Session log:\n${log}`,
     if (!s.body?.trim()) continue;
     const existing = skills.find((x) => x.id === s.id);
     if (existing) {
+      const before = existing.body;
       Object.assign(existing, { title: s.title, topic: s.topic, whenToUse: s.whenToUse, body: s.body.trim(), version: existing.version + 1, updatedAt: now });
-      changes.push(logChange({ kind: 'skill-updated', title: `${s.title} → v${existing.version}`, why: s.why }));
+      changes.push(logChange({ kind: 'skill-updated', title: `${s.title} → v${existing.version}`, why: s.why, before, after: existing.body }));
     } else {
       const id = (s.id || s.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || randomUUID();
       skills.push({ id, title: s.title, topic: s.topic, whenToUse: s.whenToUse, body: s.body.trim(), version: 1, updatedAt: now });
-      changes.push(logChange({ kind: 'skill-created', title: s.title, why: s.why }));
+      changes.push(logChange({ kind: 'skill-created', title: s.title, why: s.why, after: s.body.trim() }));
     }
   }
   for (const r of out.recipes.slice(0, 2)) {

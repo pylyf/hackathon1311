@@ -1,6 +1,8 @@
 import type {
   BrainResponse,
   ChildProfile,
+  InsightsResponse,
+  SystemResponse,
   PreparedSceneResponse,
   ProfileResponse,
   ProgressResponse,
@@ -67,6 +69,8 @@ export const api = {
   turn: (req: TurnRequest) => request<TurnResponse>('POST', '/turn', req, 90000),
   endSession: (sessionId: string) => request<SessionEndResponse>('POST', '/session/end', { sessionId }, 90000),
   brain: () => request<BrainResponse>('GET', '/brain'),
+  insights: () => request<InsightsResponse>('GET', '/insights'),
+  system: () => request<SystemResponse>('GET', '/system'),
   preparedScene: (problemId: string) => request<PreparedSceneResponse>('GET', `/problem/${problemId}/scene`, undefined, 35000),
   tts: (text: string) => request<{ audioBase64: string | null }>('POST', '/tts', { text }, 20000),
   progress: () => request<ProgressResponse>('GET', '/progress', undefined, 8000),

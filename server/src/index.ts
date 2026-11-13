@@ -12,6 +12,8 @@ import { loadMemory } from './memory.js';
 import { NotAProblemError, parseProblem } from './problem.js';
 import { loadProfile, saveProfile } from './profile.js';
 import { computeProgress } from './progress.js';
+import { computeInsights } from './insights.js';
+import { computeSystem } from './system.js';
 import { brain, getPreparedScene, improve, prepareScene } from './brain.js';
 import { computeStats, reflect } from './reflect.js';
 import { createSession, getOrCreateSession, getSession, persistSessions, type ProblemState } from './state.js';
@@ -249,6 +251,14 @@ app.post('/profile', route(async (req, res) => {
 app.get('/problem/:id/scene', route(async (req, res) => {
   res.json(await getPreparedScene(String(req.params.id)));
 }));
+
+app.get('/system', (_req, res) => {
+  res.json(computeSystem());
+});
+
+app.get('/insights', (_req, res) => {
+  res.json(computeInsights());
+});
 
 app.get('/brain', (_req, res) => {
   res.json(brain());

@@ -488,13 +488,15 @@ export async function lessonIntro(p: ProblemState, warmupMessage?: string): Prom
   return commitHint(p, ctx, safe.text, safe.ui, style, level, true);
 }
 
-function commitHint(p: ProblemState, ctx: AgentCtx, text: string, ui: UISpec | null, style: HintStyle, level: HintLevel, intro: boolean): Promise<TutorReply> {
+function commitHint(p: ProblemState, ctx: AgentCtx, text: string, ui: UISpec | null, style: HintStyle, level: HintLevel, intro: boolean, ms?: number): Promise<TutorReply> {
   p.level = level;
   if (!intro) p.hintsGiven += 1;
   p.pendingHints.push({ style, level, turnsSeen: 0 });
   p.history.push({ role: 'tutor', text });
-  logEvent({ sessionId: p.sessionId, problemId: p.id, type: 'hint', topic: p.topic, level, style, text, ui: ui?.type ?? null, ...(intro ? { intro: true } : {}), lessonId: p.lessonId ?? null });
-  return finish(text, ui, { level, style }, safeTrace(p, ctx.trace));
+  const trace = safeTrace(p, ctx.trace);
+  // trace + timing are kept for the parent's "under the hood" view (already answer-safe)
+  logEvent({ sessionId: p.sessionId, problemId: p.id, type: 'hint', topic: p.topic, level, style, text, ui: ui?.type ?? null, ...(intro ? { intro: true } : {}), lessonId: p.lessonId ?? null, trace, ...(typeof ms === 'number' ? { ms } : {}) });
+  return finish(text, ui, { level, style }, trace);
 }
 
 export async function tutorTurn(p: ProblemState, transcript: string, uiEvent?: UIEvent): Promise<TurnResult> {
@@ -540,7 +542,7 @@ export async function tutorTurn(p: ProblemState, transcript: string, uiEvent?: U
 
   logEvent({ sessionId: p.sessionId, problemId: p.id, type: 'attempt', topic: p.topic, text: transcript, outcome, uiEvent: uiEvent ?? null, lessonId: p.lessonId ?? null });
   updateBandit(p, isProgress(outcome));
-  return { reply: await commitHint(p, ctx, safe.text, safe.ui, style, level, false), solved: false, progress: outcome === 'correct_step' };
+  return { reply: await commitHint(p, ctx, safe.text, safe.ui, style, level, false, Date.now() - t0), solved: false, progress: outcome === 'correct_step' };
 }
 
 async function solvedReply(p: ProblemState, transcript: string, uiEvent: UIEvent | undefined, trace: TraceStep[], draft?: string): Promise<TurnResult> {

@@ -188,6 +188,25 @@ export default function TalkScreen({
   };
 
   // ---- Voice: tap to start, tap to stop ----
+  // Never start the mic by accident: not during the celebration, and not right after something on
+  // screen changed (a reply arriving, a banner appearing), when a tap was probably aimed elsewhere.
+  const quietUntil = useRef(0);
+  useEffect(() => {
+    quietUntil.current = Date.now() + 700;
+  }, [reply, reward, idle, ui]);
+  const tapMic = () => {
+    if (reward || Date.now() < quietUntil.current) return;
+    startRecording();
+  };
+
+  // Safety: never leave the mic open for long.
+  useEffect(() => {
+    if (!recording) return;
+    const t = setTimeout(() => stopRecording(), 30000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
+
   const startRecording = async () => {
     poke();
     setError(null);
@@ -378,7 +397,7 @@ export default function TalkScreen({
       ) : (
         <BottomBar style={styles.bottom}>
           {idle && !busy && !recording && (
-            <Pop>
+            <Pop style={styles.nudgeFloat}>
               <Pressable onPress={prepared && ui !== prepared ? showMe : poke} style={styles.nudge}>
                 <Mascot mood="excited" size={44} />
                 <Text style={styles.nudgeText}>
@@ -389,8 +408,9 @@ export default function TalkScreen({
           )}
           <View style={styles.micRow}>
             <Pressable
-              onPress={recording ? stopRecording : startRecording}
+              onPress={recording ? stopRecording : tapMic}
               disabled={busy && !recording}
+              focusable={false}
               accessibilityRole="button"
               accessibilityLabel={micLabel}
             >
@@ -434,7 +454,7 @@ export default function TalkScreen({
           </View>
         </BottomBar>
       )}
-      {reward && <Reward key={reward.id} kind={reward.kind} onDone={() => setReward(null)} />}
+      {reward && <Reward key={reward.id} kind={reward.kind} onDone={() => setReward((r) => (r?.id === reward.id ? null : r))} />}
     </View>
   );
 }
@@ -518,6 +538,7 @@ const styles = StyleSheet.create({
   },
   showMeTitle: { fontFamily: ff.black, color: '#fff', fontSize: 15, letterSpacing: 1 },
   showMeSub: { fontFamily: ff.bold, color: 'rgba(255,255,255,0.85)', fontSize: 13 },
+  nudgeFloat: { position: 'absolute', left: 16, right: 16, bottom: '100%', marginBottom: 8, zIndex: 5 },
   nudge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.yellowLight, borderRadius: 14, padding: 6, borderWidth: 2, borderColor: '#FFE08A' },
   nudgeText: { flex: 1, fontFamily: ff.black, fontSize: 14, color: colors.ink },
   scroll: { padding: 16, gap: 16, paddingBottom: 24 },

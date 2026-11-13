@@ -119,14 +119,19 @@ export default function App() {
     setRoute(r);
   };
 
+  // "Finish for today": the kid goes straight home. The agent reflects and rewrites its own skills in
+  // the background; that is for the parent's "Nudge's brain" screen, not for the child.
   const finish = async () => {
     const id = sessionId;
-    if (!id) return go({ name: 'learned' });
-    const { notes, changes, plan } = await api.endSession(id); // errors are shown by TalkScreen
     setSessionId(null);
+    go({ name: 'home' });
+    if (id) {
+      api
+        .endSession(id)
+        .catch(() => {})
+        .finally(() => loadCurriculum());
+    }
     startSession().catch(() => {});
-    loadCurriculum();
-    go({ name: 'learned', newNotes: notes, changes, plan });
   };
 
   /** Leaving a problem with the back arrow: no "finish" screen, but the session is still closed in the

@@ -89,9 +89,6 @@ export default function HomeScreen({
         <StatChip emoji="🔥" value={p?.streak ?? 0} color={colors.primary} />
         <StatChip emoji="🪨" value={p?.pebbles ?? 0} color={colors.otter} />
         <View style={{ flex: 1 }} />
-        <Pressable onPress={onLearned} style={styles.brainBtn} hitSlop={8} accessibilityLabel="Nudge's brain">
-          <Text style={{ fontSize: 20 }}>🧠</Text>
-        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -164,6 +161,10 @@ export default function HomeScreen({
           <Text style={styles.dot}>·</Text>
           <Pressable onPress={onRedoIntro} hitSlop={10}>
             <Text style={styles.link}>Redo intro</Text>
+          </Pressable>
+          <Text style={styles.dot}>·</Text>
+          <Pressable onPress={onLearned} hitSlop={10}>
+            <Text style={styles.link}>Parents</Text>
           </Pressable>
         </View>
       </View>
