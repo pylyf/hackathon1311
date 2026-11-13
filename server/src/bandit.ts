@@ -84,3 +84,10 @@ export function rewardStyle(topic: Topic, style: HintStyle, success: boolean): B
   saveBandit(s);
   return s;
 }
+
+/** Thompson-sampled style plus its posterior mean (shown in the agent trace, e.g. "visual (82%)"). */
+export function adviseStyle(topic: Topic): { style: HintStyle; mean: number } {
+  const style = pickStyle(topic);
+  const [a, b] = loadBandit()[topic][style];
+  return { style, mean: a / (a + b) };
+}

@@ -8,7 +8,7 @@ import NumberLine from './NumberLine';
 import UnitLadder from './UnitLadder';
 import { ArrayGrid, BarChart, Callout, Choice, Clock, Compare, Counters, Equation, FractionPie, PlaceValue, Ruler, Slider } from './blocks';
 
-type Props = { spec: UISpec; onEvent?: (e: UIEvent) => void; onSay?: (text: string) => void; maxWidth?: number };
+type Props = { spec: UISpec; onEvent?: (e: UIEvent) => void; onSay?: (text: string) => void; maxWidth?: number; readOnly?: boolean };
 
 const INTERACTIVE = new Set(['FractionPie', 'FractionBars', 'NumberLine', 'Counters', 'ArrayGrid', 'Ruler', 'UnitLadder', 'Slider', 'Choice', 'BarModel']);
 
@@ -63,7 +63,8 @@ function BlockWithCaption({ spec, width, onEvent }: { spec: BlockSpec; width: nu
   );
 }
 
-export function GenUIRenderer({ spec, onEvent, onSay, maxWidth = 560 }: Props) {
+export function GenUIRenderer({ spec, onEvent: onEventProp, onSay, maxWidth = 560, readOnly }: Props) {
+  const onEvent = readOnly ? undefined : onEventProp;
   const { width: winW } = useWindowDimensions();
   const width = Math.min(winW - 64, maxWidth);
   const key = JSON.stringify(spec); // remount when the spec changes so local state resets
@@ -83,7 +84,7 @@ export function GenUIRenderer({ spec, onEvent, onSay, maxWidth = 560 }: Props) {
       </Animated.View>
     );
   }
-  const interactive = INTERACTIVE.has(spec.type) && (!('interactive' in spec) || spec.interactive);
+  const interactive = !readOnly && INTERACTIVE.has(spec.type) && (!('interactive' in spec) || spec.interactive);
   return (
     <Animated.View style={[styles.wrap, anim]}>
       <Text style={styles.kicker}>{interactive ? '👆 TRY IT!' : "✏️ LET'S DRAW IT"}</Text>

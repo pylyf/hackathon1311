@@ -6,7 +6,7 @@ import { Nunito_600SemiBold, Nunito_800ExtraBold, Nunito_900Black } from '@expo-
 import { Fredoka_600SemiBold, Fredoka_700Bold } from '@expo-google-fonts/fredoka';
 import { api, errMsg } from './src/api';
 import type { Example } from './src/examples';
-import type { BrainChange, ChildProfile, MemoryNote, ProblemResponse, ProgressResponse, Topic } from './src/contract';
+import type { BrainChange, ChildProfile, Curriculum, Lesson, MemoryNote, ProblemResponse, ProgressResponse, SessionEndResponse, Topic } from './src/contract';
 import ResultScreen from './src/screens/ResultScreen';
 import { colors, ff } from './src/theme';
 import { Mascot } from './src/ui';
@@ -16,6 +16,9 @@ import PickScreen from './src/screens/PickScreen';
 import TalkScreen from './src/screens/TalkScreen';
 import LearnedScreen from './src/screens/LearnedScreen';
 import DemoScreen from './src/screens/DemoScreen';
+import UploadScreen from './src/screens/UploadScreen';
+import CurriculumScreen from './src/screens/CurriculumScreen';
+import LessonScreen from './src/screens/LessonScreen';
 import { stopSpeaking } from './src/audio';
 
 type Route =
@@ -25,8 +28,11 @@ type Route =
   | { name: 'pick'; topic?: Topic; example?: Example }
   | { name: 'talk'; problem: ProblemResponse }
   | { name: 'result'; before: ProgressResponse | null; after: ProgressResponse }
-  | { name: 'learned'; newNotes?: MemoryNote[]; changes?: BrainChange[] }
-  | { name: 'demo' };
+  | { name: 'learned'; newNotes?: MemoryNote[]; changes?: BrainChange[]; plan?: SessionEndResponse['plan'] }
+  | { name: 'demo' }
+  | { name: 'upload' }
+  | { name: 'curriculum' }
+  | { name: 'lesson'; lesson: Lesson };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'splash' });
@@ -58,6 +64,17 @@ export default function App() {
   };
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [curriculum, setCurriculum] = useState<Curriculum | null>(null);
+
+  // No curriculum (or an older server without /curriculum) simply means the photo-only flow.
+  const loadCurriculum = useCallback(async () => {
+    try {
+      const { curriculum: c } = await api.curriculum();
+      setCurriculum(c ?? null);
+    } catch {
+      /* keep what we have */
+    }
+  }, []);
 
   const startSession = useCallback(async (): Promise<string> => {
     setSessionError(null);
@@ -91,6 +108,10 @@ export default function App() {
     };
   }, [fontsReady]);
 
+  useEffect(() => {
+    if (route.name === 'home') loadCurriculum();
+  }, [route.name, loadCurriculum]);
+
   const ensureSession = useCallback(async () => sessionId ?? (await startSession()), [sessionId, startSession]);
 
   const go = (r: Route) => {
@@ -101,10 +122,19 @@ export default function App() {
   const finish = async () => {
     const id = sessionId;
     if (!id) return go({ name: 'learned' });
-    const { notes, changes } = await api.endSession(id); // errors are shown by TalkScreen
+    const { notes, changes, plan } = await api.endSession(id); // errors are shown by TalkScreen
     setSessionId(null);
     startSession().catch(() => {});
-    go({ name: 'learned', newNotes: notes, changes });
+    loadCurriculum();
+    go({ name: 'learned', newNotes: notes, changes, plan });
+  };
+
+  const startWarmup = async () => {
+    const w = curriculum?.warmup;
+    if (!w) return;
+    const id = await ensureSession();
+    const problem = await api.lessonProblem({ sessionId: id, lessonId: w.lessonId, problemId: w.problem.id, warmup: true });
+    go({ name: 'talk', problem });
   };
 
   let screen: React.ReactNode;
@@ -128,10 +158,15 @@ export default function App() {
           onRedoIntro={() => go({ name: 'onboarding' })}
           sessionError={sessionError}
           onRetrySession={() => startSession().catch(() => {})}
+          curriculum={curriculum}
           onSnap={() => go({ name: 'pick' })}
           onExample={(example) => go({ name: 'pick', example })}
           onLearned={() => go({ name: 'learned' })}
           onDemo={() => go({ name: 'demo' })}
+          onUpload={() => go({ name: 'upload' })}
+          onLesson={(lesson) => go({ name: 'lesson', lesson })}
+          onCurriculum={() => go({ name: 'curriculum' })}
+          onWarmup={startWarmup}
         />
       );
       break;
@@ -155,6 +190,8 @@ export default function App() {
           problem={route.problem}
           onBack={() => go({ name: 'home' })}
           onSolved={solved}
+          onNext={() => go({ name: 'pick' })}
+          onNextProblem={(problem) => go({ name: 'talk', problem })}
           onFinish={finish}
         />
       );
@@ -163,7 +200,40 @@ export default function App() {
       screen = <ResultScreen before={route.before} after={route.after} onNext={() => go({ name: 'pick' })} onFinish={finish} />;
       break;
     case 'learned':
-      screen = <LearnedScreen newNotes={route.newNotes} changes={route.changes} onBack={() => go({ name: 'home' })} />;
+      screen = <LearnedScreen newNotes={route.newNotes} changes={route.changes} plan={route.plan} curriculum={curriculum} onBack={() => go({ name: 'home' })} />;
+      break;
+    case 'upload':
+      screen = (
+        <UploadScreen
+          onBack={() => go({ name: 'home' })}
+          onDone={(c) => {
+            setCurriculum(c);
+            go({ name: 'curriculum' });
+          }}
+        />
+      );
+      break;
+    case 'curriculum':
+      screen = (
+        <CurriculumScreen
+          initial={curriculum}
+          onLoaded={setCurriculum}
+          onBack={() => go({ name: 'home' })}
+          onLesson={(lesson) => go({ name: 'lesson', lesson })}
+          onUpload={() => go({ name: 'upload' })}
+        />
+      );
+      break;
+    case 'lesson':
+      screen = (
+        <LessonScreen
+          key={route.lesson.id}
+          lesson={route.lesson}
+          ensureSession={ensureSession}
+          onBack={() => go(curriculum ? { name: 'curriculum' } : { name: 'home' })}
+          onProblem={(problem) => go({ name: 'talk', problem })}
+        />
+      );
       break;
     case 'demo':
       screen = <DemoScreen onBack={() => go({ name: 'home' })} />;

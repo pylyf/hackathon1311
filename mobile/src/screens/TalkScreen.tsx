@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing } from 'react-native';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import { api, errMsg } from '../api';
+import { ApiError, api, errMsg } from '../api';
 import type { HintLevel, HintStyle, ProblemResponse, SceneSpec, TurnRequest, TutorReply, UIEvent, UISpec } from '../contract';
 import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { recordingToBase64, speakReply, stopSpeaking } from '../audio';
 import { colors, ff, font } from '../theme';
 import { Bounce, Icon, Pop } from '../game';
 import { BigButton, BottomBar, BubbleText, ErrorBox, Mascot, Pill, SpeechBubble, TopBar, type Mood } from '../ui';
+import { TracePanel } from '../trace';
 
 const UI_DEBOUNCE_MS = 1200;
 const IDLE_MS = 20000;
@@ -28,12 +29,16 @@ export default function TalkScreen({
   problem,
   onBack,
   onSolved,
+  onNext,
+  onNextProblem,
   onFinish,
 }: {
   sessionId: string;
   problem: ProblemResponse;
   onBack: () => void;
-  onSolved: () => void;
+  onSolved: () => void; // photo/example flow: go to the celebration screen
+  onNext: () => void; // photo flow: snap another problem
+  onNextProblem: (p: ProblemResponse) => void; // lesson flow: go to the next practice problem
   onFinish: () => Promise<void>;
 }) {
   const [reply, setReply] = useState<TutorReply>(problem.intro);
@@ -53,6 +58,11 @@ export default function TalkScreen({
     lastActive.current = Date.now();
     setIdle(false);
   }, []);
+  // Lesson flow: next problem is prefetched as soon as this one is solved.
+  const lessonId = problem.lessonId;
+  const [nextProblem, setNextProblem] = useState<ProblemResponse | null>(null);
+  const [lessonDone, setLessonDone] = useState(false);
+  const [nextBusy, setNextBusy] = useState(false);
 
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
   const busyRef = useRef(false);
@@ -61,10 +71,12 @@ export default function TalkScreen({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<ScrollViewInstance>(null);
 
+  const [replyCount, setReplyCount] = useState(0);
   const applyReply = useCallback((r: TutorReply) => {
     lastActive.current = Date.now();
     setIdle(false);
     setReply(r);
+    setReplyCount((c) => c + 1);
     if (r.ui) setUi(r.ui);
     if (r.hint) setHint(r.hint);
     speakReply(r.text, r.audioBase64);
@@ -216,6 +228,42 @@ export default function TalkScreen({
     sendTurn({ text: t });
   };
 
+  const fetchNext = useCallback(async (): Promise<ProblemResponse | null> => {
+    if (!lessonId) return null;
+    setNextBusy(true);
+    try {
+      const p = await api.lessonProblem({ sessionId, lessonId });
+      if (!p || !p.problemId || p.problemId === problem.problemId) {
+        setLessonDone(true);
+        return null;
+      }
+      setNextProblem(p);
+      return p;
+    } catch (e) {
+      // 404/409/410 = no unsolved problems left in this lesson.
+      if (e instanceof ApiError && [404, 409, 410].includes(e.status)) setLessonDone(true);
+      else throw e;
+      return null;
+    } finally {
+      setNextBusy(false);
+    }
+  }, [lessonId, sessionId, problem.problemId]);
+
+  useEffect(() => {
+    if (solved && lessonId) fetchNext().catch(() => {}); // errors are retried when "Next problem" is tapped
+  }, [solved, lessonId, fetchNext]);
+
+  const next = async () => {
+    if (!lessonId) return onNext();
+    setError(null);
+    try {
+      const p = nextProblem ?? (await fetchNext());
+      if (p) onNextProblem(p);
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  };
+
   const finish = async () => {
     setFinishing(true);
     setError(null);
@@ -249,9 +297,13 @@ export default function TalkScreen({
       />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.problem}>
-          <Text style={styles.problemLabel}>YOUR PROBLEM · {problem.topic.toUpperCase()}</Text>
+          <Text style={styles.problemLabel}>
+            {lessonId ? 'PRACTICE' : 'YOUR PROBLEM'} · {problem.topic.toUpperCase()}
+          </Text>
           <Text style={styles.problemText}>{problem.text}</Text>
         </View>
+
+        <TracePanel steps={reply.trace} runId={replyCount} />
 
         {transcript && (
           <View style={styles.kidBubble}>
@@ -302,14 +354,29 @@ export default function TalkScreen({
         <BottomBar style={styles.celebrate}>
           <View style={styles.solvedRow}>
             <View style={styles.solvedCheck}>
-              <Icon name="check-bold" size={30} color={colors.green} />
+              <Icon name={lessonDone ? 'trophy' : 'check-bold'} size={30} color={colors.green} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.celebrateTitle}>Amazing!</Text>
-              <Text style={styles.celebrateText}>You found the answer yourself!</Text>
+              <Text style={styles.celebrateTitle}>{lessonDone ? 'Lesson done!' : 'Amazing!'}</Text>
+              <Text style={styles.celebrateText}>{lessonDone ? 'You practised every problem!' : 'You found the answer yourself!'}</Text>
             </View>
           </View>
-          <BigButton label="Continue" onPress={onSolved} color={colors.green} />
+          {lessonId ? (
+            <View style={styles.row}>
+              {!lessonDone && (
+                <BigButton
+                  label={nextBusy && !nextProblem ? 'Getting…' : 'Next problem'}
+                  onPress={next}
+                  color={colors.green}
+                  style={{ flex: 1 }}
+                  disabled={finishing || (nextBusy && !nextProblem)}
+                />
+              )}
+              <BigButton label={finishing ? 'Saving…' : 'Finish'} onPress={finish} variant="outline" color={colors.greenDark} style={{ flex: 1 }} disabled={finishing} />
+            </View>
+          ) : (
+            <BigButton label="Continue" onPress={onSolved} color={colors.green} />
+          )}
         </BottomBar>
       ) : (
         <BottomBar style={styles.bottom}>
@@ -506,6 +573,7 @@ const styles = StyleSheet.create({
   pot: { borderWidth: 2, borderColor: colors.line, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   potText: { fontFamily: ff.black, fontSize: 13, color: colors.otter },
   solvedRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  row: { flexDirection: 'row', gap: 10 },
   solvedCheck: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
   celebrate: { backgroundColor: colors.greenLight, borderTopColor: '#BDEBD1' },
   celebrateTitle: { fontFamily: ff.display, fontSize: 26, color: colors.greenDark },

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { HintStyle, HintLevel, Topic } from './contract.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.resolve(here, '..', 'data');
+export const DATA_DIR = process.env.NUDGE_DATA_DIR ? path.resolve(process.env.NUDGE_DATA_DIR) : path.resolve(here, '..', 'data');
 export const FILES = {
   bandit: path.join(DATA_DIR, 'bandit.json'),
   memory: path.join(DATA_DIR, 'memory.json'),
@@ -14,6 +14,7 @@ export const FILES = {
   skills: path.join(DATA_DIR, 'skills.json'),
   recipes: path.join(DATA_DIR, 'recipes.json'),
   brainLog: path.join(DATA_DIR, 'brain.jsonl'),
+  curriculum: path.join(DATA_DIR, 'curriculum.json'),
 };
 
 export function ensureDataDir(): void {
@@ -43,7 +44,8 @@ export type EventType =
   | 'solved'
   | 'bandit'
   | 'leak_blocked'
-  | 'session_end';
+  | 'session_end'
+  | 'plan';
 
 export interface NudgeEvent {
   ts: string;

@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { api, errMsg } from '../api';
-import type { BrainChange, BrainResponse, HintStyle, LearnedResponse, MemoryNote, Skill, Topic } from '../contract';
+import type { BrainChange, BrainResponse, Curriculum, HintStyle, LearnedResponse, MemoryNote, SessionEndResponse, Skill, Topic } from '../contract';
+import { TracePanel } from '../trace';
 import { Icon, TOPIC } from '../game';
 import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { colors, ff, font } from '../theme';
@@ -34,7 +35,49 @@ const CHANGE_ICON: Record<BrainChange['kind'], { icon: string; color: string; ve
   note: { icon: 'note-text', color: colors.inkSoft, verb: 'Noted' },
 };
 
-export default function LearnedScreen({ newNotes, changes: fresh, onBack }: { newNotes?: MemoryNote[]; changes?: BrainChange[]; onBack: () => void }) {
+type Plan = NonNullable<SessionEndResponse['plan']>;
+
+/** What the planner agent decided for next time (lessons / warm-up from the textbook curriculum). */
+function PlanCard({ plan, curriculum }: { plan: Plan; curriculum: Curriculum | null }) {
+  const next = plan.nextLessonId ? curriculum?.lessons.find((l) => l.id === plan.nextLessonId) : null;
+  return (
+    <View style={styles.plan}>
+      <Text style={styles.planTitle}>🗓️ Plan for next time</Text>
+      {plan.changes.map((c, i) => (
+        <Text key={i} style={styles.planLine}>
+          • {c}
+        </Text>
+      ))}
+      {plan.nextLessonId && (
+        <Text style={styles.planLine}>
+          <Text style={styles.bold}>Next lesson: </Text>
+          {next?.title ?? plan.nextLessonId}
+        </Text>
+      )}
+      {plan.warmup && (
+        <Text style={styles.planLine}>
+          <Text style={styles.bold}>🔥 Warm-up: </Text>
+          {plan.warmup.message}
+        </Text>
+      )}
+      <TracePanel steps={plan.trace} title="🧠 How Nudge planned this" />
+    </View>
+  );
+}
+
+export default function LearnedScreen({
+  newNotes,
+  changes: fresh,
+  plan,
+  curriculum,
+  onBack,
+}: {
+  newNotes?: MemoryNote[];
+  changes?: BrainChange[];
+  plan?: Plan;
+  curriculum?: Curriculum | null;
+  onBack: () => void;
+}) {
   const [tab, setTab] = useState<Tab>(fresh?.length ? 'changes' : 'you');
   const [learned, setLearned] = useState<LearnedResponse | null>(null);
   const [brain, setBrain] = useState<BrainResponse | null>(null);
@@ -70,6 +113,8 @@ export default function LearnedScreen({ newNotes, changes: fresh, onBack }: { ne
             <BubbleText>{headline}</BubbleText>
           </SpeechBubble>
         </View>
+
+        {plan && <PlanCard plan={plan} curriculum={curriculum ?? null} />}
 
         {brain && learned && (
           <View style={styles.counts}>
@@ -297,6 +342,10 @@ function ago(iso: string): string {
 const styles = StyleSheet.create({
   scroll: { padding: 16, gap: 16, paddingBottom: 40 },
   hero: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  plan: { gap: 6, backgroundColor: colors.greenLight, borderRadius: 18, padding: 14, borderWidth: 2, borderColor: '#BDEBD1' },
+  planTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.greenDark },
+  planLine: { fontFamily: ff.regular, fontSize: 15, color: colors.ink, lineHeight: 22 },
+  bold: { fontFamily: ff.black },
   counts: { flexDirection: 'row', gap: 8 },
   count: { flex: 1, borderWidth: 2, borderRadius: 16, padding: 10, alignItems: 'center', gap: 2, borderBottomWidth: 4 },
   countNum: { fontFamily: ff.display, fontSize: 26 },

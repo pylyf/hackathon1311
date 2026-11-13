@@ -1,14 +1,29 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { API_URL, api } from '../api';
-import type { BrainResponse, ChildProfile, ProgressResponse } from '../contract';
+import { API_URL, api, errMsg } from '../api';
+import type { BrainResponse, ChildProfile, Curriculum, Lesson, ProgressResponse } from '../contract';
+import { StatusChip } from '../trace';
 import { EXAMPLES, type Example } from '../examples';
 import { Bounce, Icon, Pop, StatChip, TOPIC } from '../game';
 import { colors, ff, font } from '../theme';
 import { BigButton, BubbleText, ErrorBox, Mascot, SpeechBubble } from '../ui';
 
+export function nextLesson(c: Curriculum | null): Lesson | null {
+  if (!c || !c.lessons.length) return null;
+  return (
+    c.lessons.find((l) => l.id === c.nextLessonId) ??
+    c.lessons.find((l) => l.status !== 'mastered' && l.status !== 'locked') ??
+    null
+  );
+}
+
 export default function HomeScreen({
   profile,
+  curriculum,
+  onUpload,
+  onLesson,
+  onCurriculum,
+  onWarmup,
   sessionError,
   onRetrySession,
   onSnap,
@@ -18,6 +33,11 @@ export default function HomeScreen({
   onRedoIntro,
 }: {
   profile: ChildProfile | null;
+  curriculum: Curriculum | null;
+  onUpload: () => void;
+  onLesson: (l: Lesson) => void;
+  onCurriculum: () => void;
+  onWarmup: () => Promise<void>;
   sessionError: string | null;
   onRetrySession: () => void;
   onSnap: () => void;
@@ -33,6 +53,22 @@ export default function HomeScreen({
     api.brain().then(setBrain).catch(() => {});
   }, []);
   useEffect(load, [load]);
+
+  const [warmBusy, setWarmBusy] = useState(false);
+  const [warmError, setWarmError] = useState<string | null>(null);
+  const lesson = nextLesson(curriculum);
+  const warmup = curriculum?.warmup ?? null;
+  const hasCurriculum = !!curriculum && curriculum.lessons.length > 0;
+  const startWarmup = async () => {
+    setWarmBusy(true);
+    setWarmError(null);
+    try {
+      await onWarmup();
+    } catch (e) {
+      setWarmError(errMsg(e));
+      setWarmBusy(false);
+    }
+  };
 
   const name = profile?.name?.split(' ')[0];
   const latest = brain?.changes[0];
@@ -70,7 +106,49 @@ export default function HomeScreen({
           </Bounce>
         </View>
 
+        {warmup && (
+          <Pop>
+            <View style={styles.warm}>
+              <View style={styles.cardHead}>
+                <Bounce distance={3}>
+                  <Text style={{ fontSize: 30 }}>🔥</Text>
+                </Bounce>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.kicker, { color: colors.primaryDark }]}>WARM-UP</Text>
+                  <Text style={styles.cardText}>{warmup.message}</Text>
+                </View>
+              </View>
+              {warmError && <Text style={styles.err}>{warmError}</Text>}
+              <BigButton small label={warmBusy ? 'Getting ready…' : 'Warm up (1 min)'} onPress={startWarmup} disabled={warmBusy} />
+            </View>
+          </Pop>
+        )}
+
         <BigButton label="Snap my homework" icon="📸" onPress={onSnap} />
+
+        {hasCurriculum && (
+          <View style={styles.today}>
+            <View style={styles.cardHead}>
+              <Text style={{ fontSize: 30 }}>📖</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.kicker, { color: colors.greenDark }]}>FROM YOUR TEXTBOOK</Text>
+                <Text style={styles.lessonTitle}>{lesson ? lesson.title : 'All lessons mastered! 🏆'}</Text>
+              </View>
+              <Pressable onPress={onCurriculum} hitSlop={10}>
+                <Text style={styles.link}>ALL ›</Text>
+              </Pressable>
+            </View>
+            {lesson ? (
+              <>
+                <Text style={styles.cardText}>{lesson.summary}</Text>
+                <StatusChip status={lesson.status} />
+                <BigButton small label="Start lesson" onPress={() => onLesson(lesson)} color={colors.green} />
+              </>
+            ) : (
+              <Text style={styles.cardText}>{curriculum!.title}</Text>
+            )}
+          </View>
+        )}
 
         {sessionError && <ErrorBox message={sessionError} onRetry={onRetrySession} />}
 
@@ -125,6 +203,15 @@ export default function HomeScreen({
               )}
             </View>
           )}
+        </Pressable>
+
+        <Pressable onPress={onUpload} style={styles.parent} accessibilityRole="button">
+          <Text style={{ fontSize: 26 }}>📚</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.parentText}>Add a textbook chapter</Text>
+            <Text style={styles.parentSub}>For parents & teachers — Nudge will teach the same way</Text>
+          </View>
+          <Icon name="chevron-right" size={24} color={colors.trackText} />
         </Pressable>
 
         <View style={styles.links}>
@@ -189,6 +276,16 @@ const styles = StyleSheet.create({
   brainStatLabel: { fontFamily: ff.bold, fontSize: 12, color: 'rgba(255,255,255,0.75)' },
   latest: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,201,60,0.15)', borderRadius: 10, padding: 8 },
   latestText: { flex: 1, fontFamily: ff.bold, fontSize: 13, color: '#FFE8A8' },
+  warm: { backgroundColor: '#FFF1EA', borderWidth: 2, borderColor: '#FFC2A8', borderRadius: 20, padding: 14, gap: 10 },
+  today: { borderWidth: 2, borderColor: '#BDEBD1', backgroundColor: colors.greenLight, borderRadius: 20, padding: 14, gap: 10 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  kicker: { fontFamily: ff.black, fontSize: 12, letterSpacing: 1 },
+  cardText: { fontFamily: ff.bold, fontSize: 15, color: colors.ink, lineHeight: 21 },
+  lessonTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.ink },
+  err: { fontFamily: ff.bold, color: colors.red, fontSize: 13 },
+  parent: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.lineDark, borderRadius: 18, padding: 12 },
+  parentText: { fontFamily: ff.black, fontSize: font.body - 1, color: colors.ink },
+  parentSub: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft },
   links: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 8 },
   link: { color: colors.blue, fontSize: font.small, fontFamily: ff.bold },
   dot: { color: colors.inkSoft },

@@ -6,6 +6,9 @@ import type { HintStyle, MemoryNote, Topic } from '../contract.js';
 import { defaultBandit, saveBandit } from '../bandit.js';
 import { saveMemory } from '../memory.js';
 import { ensureDataDir, FILES, writeJson, type NudgeEvent } from '../store.js';
+import { saveCurriculum } from '../curriculum.js';
+import { mockCurriculum } from '../mockCurriculum.js';
+import { verifyAnswer } from '../problem.js';
 
 ensureDataDir();
 
@@ -75,4 +78,26 @@ for (const s of past) {
 }
 fs.writeFileSync(FILES.events, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
 writeJson(FILES.sessions, {});
+// Ready-made curriculum (the demo never waits for building): lesson 1 mastered, lesson 3 in progress, warm-up planned.
+const cur = mockCurriculum('textbook-fractions.pdf');
+cur.createdAt = iso(now - 3 * day);
+const [l1, l2, l3] = cur.lessons;
+l1.status = 'mastered'; l1.mastery = 0.9; l1.problems.forEach((p) => { p.solved = true; });
+l2.status = 'ready'; l2.mastery = 0.1;
+l3.status = 'in-progress'; l3.mastery = 0.35; l3.problems[0].solved = true;
+cur.nextLessonId = l3.id;
+const wExpr = '1/5 + 2/5';
+cur.warmup = {
+  lessonId: l3.id,
+  message: 'Last time adding fractions was a bit tricky. Remember: the bottom number stays the same! Quick warm-up?',
+  problem: {
+    id: 'warmup-seed', text: '1/5 + 2/5 = ?', topic: 'fractions', skill: l3.skill, difficulty: 1,
+    question: 'What is 1/5 plus 2/5?',
+    answer: { value: verifyAnswer(wExpr, 0.6).value, unit: null, expression: wExpr, verified: verifyAnswer(wExpr, 0.6).verified },
+    starterVisual: { type: 'FractionBars', caption: 'One fifth and two fifths', rows: [{ denominator: 5, shaded: 1, label: '1/5' }, { denominator: 5, shaded: 2, label: '2/5' }], interactive: true },
+  },
+};
+saveCurriculum(cur);
+
+console.log(`Seeded curriculum "${cur.title}" (${cur.lessons.length} lessons, next ${cur.nextLessonId}, warm-up ${cur.warmup.problem.text}).`);
 console.log(`Seeded ${past.length} sessions, ${events.length} events, ${memory.length} memory notes, bandit favouring visual for fractions.`);
