@@ -7,7 +7,7 @@ import type { ProblemResponse, Topic } from '../contract';
 import { EXAMPLES, type Example } from '../examples';
 import { Icon, TOPIC } from '../game';
 import { colors, ff, font } from '../theme';
-import { ErrorBox, Loading, MascotSays, TopBar } from '../ui';
+import { ActionTile, Divider, ErrorBox, Loading, MascotSays, TopBar } from '../ui';
 
 const MAX_SIDE = 1280;
 
@@ -147,21 +147,11 @@ export default function PickScreen({
         {error && <ErrorBox message={error} onRetry={lastAsset ? () => send(lastAsset) : example ? () => sendExample(example) : undefined} />}
 
         <View style={styles.photoRow}>
-          <PhotoTile
-            icon="camera"
-            title={isWeb ? 'Camera' : 'Take a photo'}
-            color={colors.primary}
-            dark={colors.primaryDark}
-            onPress={() => pick(true)}
-          />
-          <PhotoTile icon="image-multiple" title={isWeb ? 'Choose file' : 'From photos'} color={colors.blue} dark={colors.blueDark} onPress={() => pick(false)} />
+          <ActionTile icon="camera" title={isWeb ? 'Camera' : 'Take a photo'} color={colors.primary} onPress={() => pick(true)} />
+          <ActionTile icon="image-multiple" title={isWeb ? 'Choose file' : 'From photos'} color={colors.blue} onPress={() => pick(false)} />
         </View>
 
-        <View style={styles.divider}>
-          <View style={styles.rule} />
-          <Text style={styles.dividerText}>OR TRY AN EXAMPLE</Text>
-          <View style={styles.rule} />
-        </View>
+        <Divider label="or try an example" />
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
           {(['all', 'word-problems', 'fractions', 'units'] as const).map((f) => {
@@ -212,31 +202,10 @@ export default function PickScreen({
   );
 }
 
-function PhotoTile({ icon, title, color, dark, onPress }: { icon: string; title: string; color: string; dark: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={{ flex: 1 }}>
-      {({ pressed }) => (
-        <View style={[styles.photoTile, { backgroundColor: color, borderBottomColor: dark, borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 }]}>
-          <View style={styles.photoIcon}>
-            <Icon name={icon as never} size={34} color="#fff" />
-          </View>
-          <Text style={styles.photoTitle}>{title.toUpperCase()}</Text>
-        </View>
-      )}
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { padding: 18, gap: 18, flexGrow: 1, paddingBottom: 40 },
   preview: { width: '100%', height: 220, borderRadius: 16, backgroundColor: '#F7F7F7', borderWidth: 2, borderColor: colors.line },
   photoRow: { flexDirection: 'row', gap: 12 },
-  photoTile: { borderRadius: 18, paddingVertical: 18, alignItems: 'center', gap: 8 },
-  photoIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center' },
-  photoTitle: { fontFamily: ff.black, color: '#fff', fontSize: 14, letterSpacing: 0.8 },
-  divider: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  rule: { flex: 1, height: 2, backgroundColor: colors.line },
-  dividerText: { fontFamily: ff.black, fontSize: 13, color: colors.trackText, letterSpacing: 1 },
   filters: { gap: 8 },
   filter: { borderWidth: 2, borderColor: colors.line, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff' },
   filterText: { fontFamily: ff.black, fontSize: 14, color: colors.inkSoft },

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { LessonStatus, TraceStep } from './contract';
-import { colors, font } from './theme';
+import { colors, ff, font } from './theme';
+import { ProgressBar as UIProgressBar, Tag } from './ui';
 
 export const TRACE_ICON: Record<TraceStep['kind'], string> = {
   read: '📖',
@@ -108,51 +109,49 @@ export function StepChecklist({ steps, running }: { steps: TraceStep[]; running:
   );
 }
 
-export const STATUS_STYLE: Record<LessonStatus, { label: string; bg: string; fg: string }> = {
-  ready: { label: 'ready', bg: '#DDEBFF', fg: colors.blue },
-  'in-progress': { label: 'in progress', bg: '#FFE6D9', fg: colors.primaryDark },
-  review: { label: 'review', bg: '#FFF1C9', fg: '#A87400' },
-  mastered: { label: 'mastered ⭐', bg: '#DDF7EA', fg: '#178A57' },
-  locked: { label: 'locked 🔒', bg: '#EEEAE2', fg: colors.inkSoft },
+export const STATUS_STYLE: Record<LessonStatus, { label: string; bg: string; fg: string; bar: string }> = {
+  ready: { label: 'ready', bg: colors.blueLight, fg: colors.blueDark, bar: colors.blue },
+  'in-progress': { label: 'in progress', bg: '#FFE9DF', fg: colors.primaryDark, bar: colors.primary },
+  review: { label: 'review', bg: colors.yellowLight, fg: colors.yellowDark, bar: colors.yellow },
+  mastered: { label: 'mastered ⭐', bg: colors.greenLight, fg: colors.greenDark, bar: colors.green },
+  locked: { label: 'locked', bg: colors.track, fg: colors.trackText, bar: colors.trackText },
 };
 
 export function StatusChip({ status }: { status: LessonStatus }) {
   const st = STATUS_STYLE[status] ?? STATUS_STYLE.ready;
-  return (
-    <View style={[styles.chip, { backgroundColor: st.bg }]}>
-      <Text style={[styles.chipText, { color: st.fg }]}>{st.label}</Text>
-    </View>
-  );
+  return <Tag label={st.label} bg={st.bg} fg={st.fg} />;
 }
 
 export function ProgressBar({ value, color = colors.green }: { value: number; color?: string }) {
-  const pct = Math.max(0, Math.min(1, value || 0)) * 100;
-  return (
-    <View style={styles.track}>
-      <View style={[styles.fill, { width: `${pct}%`, backgroundColor: color }]} />
-    </View>
-  );
+  return <UIProgressBar value={Math.max(0, Math.min(1, value || 0))} color={color} style={{ flex: 1 }} />;
 }
 
 const styles = StyleSheet.create({
-  panel: { backgroundColor: '#F3EEFF', borderRadius: 18, padding: 12, gap: 6, borderWidth: 2, borderColor: '#DCCFFF' },
+  panel: { backgroundColor: '#F6F0FF', borderRadius: 18, padding: 12, gap: 6, borderWidth: 2, borderColor: '#E2D3FC', borderBottomWidth: 4 },
   panelHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  panelTitle: { fontSize: font.small + 1, fontWeight: '900', color: colors.purple },
-  panelToggle: { fontSize: 13, fontWeight: '700', color: colors.purple },
+  panelTitle: { fontFamily: ff.black, fontSize: font.small, color: colors.purpleDark, letterSpacing: 0.3 },
+  panelToggle: { fontFamily: ff.bold, fontSize: 13, color: colors.purple },
   traceRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 2 },
   traceIcon: { fontSize: 16, width: 24, textAlign: 'center' },
-  traceText: { flex: 1, fontSize: font.small, color: colors.ink, lineHeight: 21 },
+  traceText: { flex: 1, fontFamily: ff.regular, fontSize: font.small, color: colors.ink, lineHeight: 21 },
   checklist: { gap: 10 },
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, backgroundColor: '#fff' },
-  checkRowActive: { backgroundColor: '#FFF1E8', borderWidth: 2, borderColor: colors.primary },
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderBottomWidth: 4,
+  },
+  checkRowActive: { backgroundColor: '#FFF3EC', borderColor: '#FFC3A8', borderBottomColor: colors.primary },
   checkDot: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   dotDone: { backgroundColor: colors.green },
   dotActive: { backgroundColor: '#fff' },
-  tick: { color: '#fff', fontWeight: '900', fontSize: 16 },
-  checkText: { flex: 1, fontSize: font.body - 1, color: colors.ink, fontWeight: '700' },
-  checkTextDone: { fontWeight: '600', color: colors.inkSoft },
-  chip: { borderRadius: 10, paddingHorizontal: 9, paddingVertical: 3, alignSelf: 'flex-start' },
-  chipText: { fontSize: 12, fontWeight: '800' },
-  track: { height: 10, backgroundColor: '#F1ECE2', borderRadius: 5, overflow: 'hidden', flex: 1 },
-  fill: { height: '100%', borderRadius: 5 },
+  tick: { fontFamily: ff.black, color: '#fff', fontSize: 16 },
+  checkText: { flex: 1, fontFamily: ff.bold, fontSize: font.small + 1, color: colors.ink, lineHeight: 22 },
+  checkTextDone: { fontFamily: ff.regular, color: colors.inkSoft },
 });

@@ -2,11 +2,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { api, errMsg } from '../api';
 import type { Curriculum, Lesson } from '../contract';
-import { colors, font, radius, shadow } from '../theme';
-import { BigButton, Card, ErrorBox, Loading, TopBar } from '../ui';
-import { ProgressBar, StatusChip } from '../trace';
-
-const TOPIC_ICON: Record<Lesson['topic'], string> = { fractions: '🍕', units: '📏', 'word-problems': '📝' };
+import { Icon, TOPIC } from '../game';
+import { colors, ff, font } from '../theme';
+import { ActionTile, BigButton, Divider, ErrorBox, Loading, MascotSays, TopBar } from '../ui';
+import { ProgressBar, STATUS_STYLE, StatusChip } from '../trace';
 
 export default function CurriculumScreen({
   initial,
@@ -51,82 +50,79 @@ export default function CurriculumScreen({
     <View style={{ flex: 1 }}>
       <TopBar title="Lessons" onBack={onBack} />
       <ScrollView contentContainerStyle={styles.scroll}>
-        {loading && !cur && <Loading label="Loading lessons…" />}
+        {loading && !cur && <Loading label="Loading your lessons…" />}
         {error && !cur && <ErrorBox message={error} onRetry={load} />}
         {!loading && !cur && !error && (
-          <Card style={{ gap: 12, alignItems: 'center' }}>
-            <Text style={styles.h1}>No chapter yet</Text>
-            <Text style={styles.meta}>Upload a textbook chapter and Nudge will build lessons from it.</Text>
-            <BigButton small label="📚 Add a textbook chapter" onPress={onUpload} />
-          </Card>
+          <>
+            <MascotSays mood="sleepy">No chapter yet. Add one and I'll make lessons from it!</MascotSays>
+            <ActionTile icon="book-plus" title="Add a textbook chapter" color={colors.primary} onPress={onUpload} style={{ flex: 0 }} />
+          </>
         )}
 
         {cur && (
           <>
-            <Card style={styles.header}>
-              <Text style={styles.h1}>{cur.title}</Text>
+            <MascotSays mood={mastered === lessons.length && lessons.length ? 'dancing' : 'excited'} size={96}>
+              <Text style={styles.chapter}>{cur.title}</Text>
               <Text style={styles.meta} numberOfLines={1}>
-                From: {cur.source} · {lessons.length} lessons
+                {lessons.length} lessons · {mastered} mastered
               </Text>
               <View style={styles.progressRow}>
-                <ProgressBar value={overall} />
+                <ProgressBar value={overall} color={colors.primary} />
                 <Text style={styles.pct}>{Math.round(overall * 100)}%</Text>
               </View>
-              <Text style={styles.meta}>
-                {mastered}/{lessons.length} mastered
-              </Text>
-            </Card>
+            </MascotSays>
+
+            <Divider label="your lessons" />
 
             {lessons.map((l, i) => {
               const locked = l.status === 'locked';
               const isNext = l.id === cur.nextLessonId;
+              const t = TOPIC[l.topic] ?? TOPIC.fractions;
+              const st = STATUS_STYLE[l.status] ?? STATUS_STYLE.ready;
               return (
-                <Pressable
-                  key={l.id}
-                  onPress={() => !locked && onLesson(l)}
-                  disabled={locked}
-                  accessibilityRole="button"
-                  style={({ pressed }) => [
-                    styles.lesson,
-                    shadow,
-                    isNext && styles.lessonNext,
-                    locked && { opacity: 0.55 },
-                    pressed && { transform: [{ scale: 0.98 }] },
-                  ]}
-                >
-                  <View style={styles.num}>
-                    <Text style={styles.numText}>{i + 1}</Text>
-                  </View>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <View style={styles.titleRow}>
-                      <Text style={styles.lessonTitle}>
-                        {TOPIC_ICON[l.topic] ?? '📘'} {l.title}
-                      </Text>
+                <Pressable key={l.id} onPress={() => !locked && onLesson(l)} disabled={locked} accessibilityRole="button">
+                  {({ pressed }) => (
+                    <View
+                      style={[
+                        styles.card,
+                        isNext && styles.cardNext,
+                        locked && { opacity: 0.55 },
+                        { borderBottomWidth: pressed ? 2 : 4, marginTop: pressed ? 2 : 0 },
+                      ]}
+                    >
+                      <View style={[styles.art, { backgroundColor: t.light }]}>
+                        <Text style={styles.artEmoji}>{t.emoji}</Text>
+                        <View style={[styles.num, { backgroundColor: t.color }]}>
+                          <Text style={styles.numText}>{i + 1}</Text>
+                        </View>
+                      </View>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <StatusChip status={l.status} />
+                        <Text style={styles.title}>{l.title}</Text>
+                        <Text style={styles.summary} numberOfLines={2}>
+                          {l.summary}
+                        </Text>
+                        <View style={styles.progressRow}>
+                          <ProgressBar value={l.mastery} color={st.bar} />
+                          <Text style={styles.small}>{l.problems.length} problems</Text>
+                        </View>
+                      </View>
+                      <Icon name={locked ? 'lock' : 'play-circle'} size={34} color={locked ? colors.trackText : t.color} />
+                      {isNext && (
+                        <View style={styles.nextBadge}>
+                          <Text style={styles.nextBadgeText}>NEXT UP</Text>
+                        </View>
+                      )}
                     </View>
-                    <Text style={styles.summary} numberOfLines={2}>
-                      {l.summary}
-                    </Text>
-                    <View style={styles.chipRow}>
-                      <StatusChip status={l.status} />
-                      {isNext && <Text style={styles.nextTag}>▶ next up</Text>}
-                      <Text style={styles.small}>
-                        {l.problems.length} problems{l.sourcePages ? ` · ${l.sourcePages}` : ''}
-                      </Text>
-                    </View>
-                    <View style={styles.progressRow}>
-                      <ProgressBar value={l.mastery} color={l.status === 'review' ? colors.yellow : colors.green} />
-                      <Text style={styles.small}>{Math.round((l.mastery || 0) * 100)}%</Text>
-                    </View>
-                  </View>
-                  {!locked && <Text style={styles.chev}>›</Text>}
+                  )}
                 </Pressable>
               );
             })}
 
             {error && <ErrorBox message={error} onRetry={load} />}
             <View style={styles.row}>
-              <BigButton small label="↻ Refresh" onPress={load} color={colors.blue} style={{ flex: 1 }} />
-              <BigButton small label="📚 New chapter" onPress={onUpload} color={colors.purple} style={{ flex: 1 }} />
+              <BigButton small variant="outline" label="Refresh" icon="↻" onPress={load} color={colors.blue} style={{ flex: 1 }} />
+              <BigButton small label="New chapter" icon="📚" onPress={onUpload} color={colors.primary} style={{ flex: 1 }} />
             </View>
           </>
         )}
@@ -136,31 +132,30 @@ export default function CurriculumScreen({
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: 16, gap: 12, paddingBottom: 40 },
-  header: { gap: 6 },
-  h1: { fontSize: font.big, fontWeight: '900', color: colors.ink },
-  meta: { fontSize: font.small, color: colors.inkSoft },
-  progressRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  pct: { fontSize: font.small, fontWeight: '800', color: colors.ink, width: 44, textAlign: 'right' },
-  lesson: {
+  scroll: { padding: 18, gap: 16, paddingBottom: 40 },
+  chapter: { fontFamily: ff.display, fontSize: font.big, color: colors.ink },
+  meta: { fontFamily: ff.regular, fontSize: font.small, color: colors.inkSoft, marginTop: 2 },
+  progressRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 },
+  pct: { fontFamily: ff.black, fontSize: font.small, color: colors.ink, minWidth: 40, textAlign: 'right' },
+  card: {
     flexDirection: 'row',
-    gap: 12,
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius,
-    padding: 14,
+    gap: 12,
     borderWidth: 2,
-    borderColor: 'transparent',
+    borderColor: colors.line,
+    borderRadius: 18,
+    padding: 10,
+    backgroundColor: '#fff',
   },
-  lessonNext: { borderColor: colors.primary },
-  num: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#FFF1C9', alignItems: 'center', justifyContent: 'center' },
-  numText: { fontSize: font.body, fontWeight: '900', color: colors.ink },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  lessonTitle: { fontSize: font.body, fontWeight: '800', color: colors.ink, flex: 1 },
-  summary: { fontSize: font.small, color: colors.inkSoft, lineHeight: 20 },
-  chipRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  nextTag: { fontSize: 12, fontWeight: '900', color: colors.primary },
-  small: { fontSize: 12, color: colors.inkSoft },
-  chev: { fontSize: 32, color: colors.inkSoft },
+  cardNext: { borderColor: '#FFC3A8', borderBottomColor: colors.primary, backgroundColor: '#FFF8F4' },
+  art: { width: 74, height: 74, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  artEmoji: { fontSize: 40 },
+  num: { position: 'absolute', top: -6, left: -6, width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
+  numText: { fontFamily: ff.black, color: '#fff', fontSize: 13 },
+  title: { fontFamily: ff.black, fontSize: font.body, color: colors.ink },
+  summary: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft, lineHeight: 18 },
+  small: { fontFamily: ff.bold, fontSize: 12, color: colors.inkSoft },
+  nextBadge: { position: 'absolute', top: -11, right: 14, backgroundColor: colors.primary, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  nextBadgeText: { fontFamily: ff.black, color: '#fff', fontSize: 11, letterSpacing: 0.8 },
   row: { flexDirection: 'row', gap: 12, marginTop: 4 },
 });

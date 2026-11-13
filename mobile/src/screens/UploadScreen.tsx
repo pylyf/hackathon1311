@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { api, errMsg } from '../api';
 import type { Curriculum, TextbookRequest, TraceStep } from '../contract';
-import { colors, font } from '../theme';
-import { BigButton, Card, ErrorBox, TopBar } from '../ui';
+import { Icon } from '../game';
+import { colors, ff, font } from '../theme';
+import { ActionTile, BigButton, BottomBar, BubbleText, Divider, ErrorBox, Mascot, MascotSays, SpeechBubble, TopBar } from '../ui';
 import { StepChecklist } from '../trace';
 import { toJpegBase64 } from './PickScreen';
 
@@ -36,23 +37,6 @@ async function documentToBase64(asset: DocumentPicker.DocumentPickerAsset): Prom
     return blobToBase64(blob);
   }
   return new File(asset.uri).base64();
-}
-
-function PulsingBook() {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(anim, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
-        Animated.timing(anim, { toValue: 0, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [anim]);
-  const scale = anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
-  const rotate = anim.interpolate({ inputRange: [0, 1], outputRange: ['-4deg', '4deg'] });
-  return <Animated.Text style={[styles.book, { transform: [{ scale }, { rotate }] }]}>📚</Animated.Text>;
 }
 
 export default function UploadScreen({ onBack, onDone }: { onBack: () => void; onDone: (c: Curriculum) => void }) {
@@ -170,70 +154,115 @@ export default function UploadScreen({ onBack, onDone }: { onBack: () => void; o
 
   return (
     <View style={{ flex: 1 }}>
-      <TopBar title="Add a chapter" onBack={busy ? undefined : onBack} />
+      <TopBar title={phase === 'pick' ? 'Add a chapter' : 'Building lessons'} onBack={busy ? undefined : onBack} />
       <ScrollView contentContainerStyle={styles.container}>
         {phase === 'pick' && (
           <>
-            <Card style={styles.intro}>
-              <Text style={styles.h1}>📚 Turn a textbook chapter into lessons</Text>
-              <Text style={styles.p}>
-                For parents & teachers. Upload the chapter your child is working on (PDF or a photo of a page). Nudge's agent reads it,
-                plans short lessons, writes practice problems and checks them — using the same method as the textbook.
-              </Text>
-            </Card>
+            <MascotSays mood={error ? 'crying' : 'excited'}>
+              {error ? 'Hmm, that did not work. Try again?' : "Give me your child's textbook chapter. I'll turn it into lessons!"}
+            </MascotSays>
             {error && <ErrorBox message={error} onRetry={payload ? () => start(payload) : undefined} />}
-            <BigButton label="📄  Choose a PDF" onPress={pickPdf} style={styles.main} />
+
             <View style={styles.row}>
-              <BigButton small label="🖼️  Photo of a page" onPress={() => pickImage(false)} color={colors.blue} style={{ flex: 1 }} />
-              {Platform.OS !== 'web' && (
-                <BigButton small label="📷  Camera" onPress={() => pickImage(true)} color={colors.purple} style={{ flex: 1 }} />
-              )}
+              <ActionTile icon="file-pdf-box" title="Choose a PDF" color={colors.primary} onPress={pickPdf} />
+              <ActionTile icon="image-multiple" title="Photo of a page" color={colors.blue} onPress={() => pickImage(false)} />
             </View>
+            {Platform.OS !== 'web' && (
+              <ActionTile icon="camera" title="Take a photo of the page" color={colors.purple} onPress={() => pickImage(true)} style={{ flex: 0 }} />
+            )}
+
+            <Divider label="what happens next" />
+            <View style={styles.how}>
+              {HOW.map((h) => (
+                <View key={h.title} style={styles.howCard}>
+                  <View style={[styles.howArt, { backgroundColor: h.bg }]}>
+                    <Text style={styles.howEmoji}>{h.emoji}</Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={styles.howTitle}>{h.title}</Text>
+                    <Text style={styles.howText}>{h.text}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+            <Text style={styles.note}>For parents & teachers · PDF up to 20 MB or a clear photo of one page</Text>
           </>
         )}
 
         {phase !== 'pick' && (
-          <Card style={styles.jobCard}>
+          <>
             <View style={styles.jobHead}>
-              {phase === 'done' ? <Text style={styles.book}>🎉</Text> : <PulsingBook />}
-              <View style={{ flex: 1 }}>
-                <Text style={styles.h1}>{phase === 'done' ? 'Lessons are ready!' : 'Nudge is building lessons…'}</Text>
+              <SpeechBubble tail="down">
+                <BubbleText>
+                  {phase === 'done'
+                    ? `${result?.title ?? 'Your chapter'} is ready: ${lessonCount} lesson${lessonCount === 1 ? '' : 's'}, ${problemCount} problems!`
+                    : 'Reading your chapter and planning lessons…'}
+                </BubbleText>
+              </SpeechBubble>
+              <Mascot mood={phase === 'done' ? 'dancing' : 'pebble'} size={150} />
+              <View style={styles.fileTag}>
+                <Icon name="file-document-outline" size={16} color={colors.inkSoft} />
                 <Text style={styles.fileName} numberOfLines={1}>
                   {payload?.fileName ?? 'your file'}
                 </Text>
               </View>
             </View>
+
+            <Divider label={phase === 'done' ? 'what nudge did' : 'nudge is working'} />
             {phase === 'uploading' && <StepChecklist steps={[{ kind: 'read', text: '📤 Uploading the chapter…' }]} running />}
             {phase !== 'uploading' && steps.length === 0 && (
               <StepChecklist steps={[{ kind: 'read', text: '📖 Opening the chapter…' }]} running={phase === 'running'} />
             )}
             {steps.length > 0 && <StepChecklist steps={steps} running={phase === 'running'} />}
-            {phase === 'done' && result && (
-              <View style={styles.doneBox}>
-                <Text style={styles.doneText}>
-                  {result.title} · {lessonCount} lesson{lessonCount === 1 ? '' : 's'} · {problemCount} problems
-                </Text>
-                <BigButton small label="See the lessons ›" onPress={() => finishOnce(result)} color={colors.green} />
-              </View>
-            )}
-          </Card>
+          </>
         )}
       </ScrollView>
+      {phase === 'done' && result && (
+        <BottomBar>
+          <BigButton label="See the lessons" icon="📚" onPress={() => finishOnce(result)} color={colors.green} />
+        </BottomBar>
+      )}
     </View>
   );
 }
 
+const HOW = [
+  { emoji: '📖', bg: colors.blueLight, title: 'Nudge reads the chapter', text: 'It learns the method your textbook uses.' },
+  { emoji: '🗺️', bg: colors.yellowLight, title: 'Plans short lessons', text: 'One skill per lesson, in the right order.' },
+  { emoji: '🧪', bg: colors.greenLight, title: 'Writes & checks problems', text: 'Every answer is double-checked by maths.' },
+];
+
 const styles = StyleSheet.create({
-  container: { padding: 20, gap: 16, flexGrow: 1, justifyContent: 'center' },
-  intro: { gap: 8 },
-  h1: { fontSize: font.big - 2, fontWeight: '900', color: colors.ink },
-  p: { fontSize: font.small + 1, color: colors.inkSoft, lineHeight: 23 },
-  main: { paddingVertical: 26 },
+  container: { padding: 18, gap: 18, flexGrow: 1, paddingBottom: 40 },
   row: { flexDirection: 'row', gap: 12 },
-  jobCard: { gap: 14, backgroundColor: '#FFFDF8', borderWidth: 2, borderColor: colors.line },
-  jobHead: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  book: { fontSize: 52 },
-  fileName: { fontSize: font.small, color: colors.inkSoft, marginTop: 2 },
-  doneBox: { gap: 10, marginTop: 4, alignItems: 'stretch' },
-  doneText: { fontSize: font.body, fontWeight: '800', color: colors.ink, textAlign: 'center' },
+  how: { gap: 12 },
+  howCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderBottomWidth: 4,
+    borderRadius: 18,
+    padding: 10,
+    backgroundColor: '#fff',
+  },
+  howArt: { width: 56, height: 56, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  howEmoji: { fontSize: 30 },
+  howTitle: { fontFamily: ff.black, fontSize: font.body - 1, color: colors.ink },
+  howText: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft, lineHeight: 18 },
+  note: { fontFamily: ff.regular, fontSize: 13, color: colors.trackText, textAlign: 'center' },
+  jobHead: { alignItems: 'center', gap: 8 },
+  fileTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '90%',
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  fileName: { fontFamily: ff.bold, fontSize: 13, color: colors.inkSoft, flexShrink: 1 },
 });

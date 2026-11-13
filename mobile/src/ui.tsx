@@ -12,6 +12,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { Icon } from './game';
 import { colors, edgeOf, ff, font, radius } from './theme';
 
 // ---------------------------------------------------------------- Mascot
@@ -206,6 +207,54 @@ export function OptionCard({
         </View>
       )}
     </Pressable>
+  );
+}
+
+/** Big coloured tile with a round icon and an uppercase label (camera / file / PDF pickers). */
+export function ActionTile({
+  icon,
+  title,
+  color,
+  onPress,
+  style,
+}: {
+  icon: string;
+  title: string;
+  color: string;
+  onPress: () => void;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[{ flex: 1 }, style]} accessibilityRole="button" accessibilityLabel={title}>
+      {({ pressed }) => (
+        <View style={[styles.tile, { backgroundColor: color, borderBottomColor: edgeOf(color), borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 }]}>
+          <View style={styles.tileIcon}>
+            <Icon name={icon as never} size={34} color="#fff" />
+          </View>
+          <Text style={styles.tileTitle}>{title.toUpperCase()}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+/** "──── LABEL ────" section divider. */
+export function Divider({ label }: { label: string }) {
+  return (
+    <View style={styles.divider}>
+      <View style={styles.rule} />
+      <Text style={styles.dividerText}>{label.toUpperCase()}</Text>
+      <View style={styles.rule} />
+    </View>
+  );
+}
+
+/** Small uppercase tag (topic, status…). */
+export function Tag({ label, bg, fg }: { label: string; bg: string; fg: string }) {
+  return (
+    <View style={[styles.tag, { backgroundColor: bg }]}>
+      <Text style={[styles.tagText, { color: fg }]}>{label.toUpperCase()}</Text>
+    </View>
   );
 }
 
@@ -415,6 +464,16 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   optionBadgeText: { fontFamily: ff.black, color: '#fff', fontSize: 12, letterSpacing: 0.8 },
+
+  // tiles, dividers, tags
+  tile: { borderRadius: 18, paddingVertical: 18, paddingHorizontal: 8, alignItems: 'center', gap: 8 },
+  tileIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center' },
+  tileTitle: { fontFamily: ff.black, color: '#fff', fontSize: 14, letterSpacing: 0.8, textAlign: 'center' },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  rule: { flex: 1, height: 2, backgroundColor: colors.line },
+  dividerText: { fontFamily: ff.black, fontSize: 13, color: colors.trackText, letterSpacing: 1 },
+  tag: { alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  tagText: { fontFamily: ff.black, fontSize: 10, letterSpacing: 0.8 },
 
   // layout
   card: {
