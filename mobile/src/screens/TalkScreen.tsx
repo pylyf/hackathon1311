@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Easing } from 'react-native';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { api, errMsg } from '../api';
-import type { HintLevel, HintStyle, ProblemResponse, TurnRequest, TutorReply, UIEvent, UISpec } from '../contract';
+import type { HintLevel, HintStyle, ProblemResponse, SceneSpec, TurnRequest, TutorReply, UIEvent, UISpec } from '../contract';
 import { GenUIRenderer } from '../genui/GenUIRenderer';
 import { recordingToBase64, speakReply, stopSpeaking } from '../audio';
-import { colors, font, radius, shadow } from '../theme';
-import { BigButton, Card, ErrorBox, TopBar } from '../ui';
+import { colors, ff, font } from '../theme';
+import { Bounce, Icon, Pop } from '../game';
+import { BigButton, BottomBar, BubbleText, ErrorBox, Mascot, Pill, SpeechBubble, TopBar, type Mood } from '../ui';
 
 const UI_DEBOUNCE_MS = 1200;
+const IDLE_MS = 20000;
 const RECORDING_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, numberOfChannels: 1, bitRate: 64000 };
 
 const STYLE_COLORS: Record<HintStyle, string> = {
@@ -24,13 +27,13 @@ export default function TalkScreen({
   sessionId,
   problem,
   onBack,
-  onNext,
+  onSolved,
   onFinish,
 }: {
   sessionId: string;
   problem: ProblemResponse;
   onBack: () => void;
-  onNext: () => void;
+  onSolved: () => void;
   onFinish: () => Promise<void>;
 }) {
   const [reply, setReply] = useState<TutorReply>(problem.intro);
@@ -43,6 +46,13 @@ export default function TalkScreen({
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [finishing, setFinishing] = useState(false);
+  const [prepared, setPrepared] = useState<SceneSpec | null>(null);
+  const [idle, setIdle] = useState(false);
+  const lastActive = useRef(Date.now());
+  const poke = useCallback(() => {
+    lastActive.current = Date.now();
+    setIdle(false);
+  }, []);
 
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
   const busyRef = useRef(false);
@@ -52,6 +62,8 @@ export default function TalkScreen({
   const scrollRef = useRef<ScrollViewInstance>(null);
 
   const applyReply = useCallback((r: TutorReply) => {
+    lastActive.current = Date.now();
+    setIdle(false);
     setReply(r);
     if (r.ui) setUi(r.ui);
     if (r.hint) setHint(r.hint);
@@ -67,9 +79,30 @@ export default function TalkScreen({
     };
   }, [problem]);
 
+  // The agent prepares a "Show me" explainer in the background — pick it up when it is ready.
+  useEffect(() => {
+    let alive = true;
+    api
+      .preparedScene(problem.problemId)
+      .then((r) => alive && r.scene && setPrepared(r.scene))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [problem.problemId]);
+
+  // Attention: if nothing happens for a while, the otter tries to win the child back.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!busyRef.current && Date.now() - lastActive.current > IDLE_MS) setIdle(true);
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
+
   const sendTurn = useCallback(
     async (extra: TurnExtra) => {
       if (busyRef.current) return;
+      poke();
       busyRef.current = true;
       lastReq.current = extra;
       setBusy(true);
@@ -79,7 +112,7 @@ export default function TalkScreen({
         if (res.transcript && !extra.uiEvent) setTranscript(res.transcript);
         applyReply(res.reply);
         if (res.solved) setSolved(true);
-        setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 50);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
       } catch (e) {
         setError(errMsg(e));
       } finally {
@@ -87,7 +120,7 @@ export default function TalkScreen({
         setBusy(false);
       }
     },
-    [sessionId, problem.problemId, applyReply],
+    [sessionId, problem.problemId, applyReply, poke],
   );
 
   // ---- GenUI events: debounce, then send as a turn ----
@@ -106,15 +139,38 @@ export default function TalkScreen({
   const onUIEvent = useCallback(
     (e: UIEvent) => {
       if (solved) return;
+      poke();
+      if (e.component === 'Choice' && typeof e.data.option === 'string') {
+        setTranscript(e.data.option);
+        sendTurn({ text: e.data.option });
+        return;
+      }
       pendingEvent.current = e;
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(flushEvent, UI_DEBOUNCE_MS);
     },
-    [flushEvent, solved],
+    [flushEvent, solved, poke, sendTurn],
   );
+
+  // Scene steps are read aloud in the tutor's own voice (falls back to device speech).
+  const sayStep = useCallback((t: string) => {
+    lastActive.current = Date.now();
+    api
+      .tts(t)
+      .then((r) => speakReply(t, r.audioBase64))
+      .catch(() => speakReply(t, null));
+  }, []);
+
+  const showMe = () => {
+    if (!prepared) return;
+    poke();
+    setUi(prepared);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+  };
 
   // ---- Voice: tap to start, tap to stop ----
   const startRecording = async () => {
+    poke();
     setError(null);
     stopSpeaking();
     try {
@@ -172,146 +228,286 @@ export default function TalkScreen({
   };
 
   const micLabel = recording ? 'Tap to stop' : busy ? 'Thinking…' : 'Tap to talk';
+  // pebbles still on the table: fewer hints = more pebbles (matches the server's scoring)
+  const hintsSoFar = Math.max(0, (hint?.level ?? 1) - 1);
+  const potential = 10 + (hintsSoFar <= 0 ? 10 : hintsSoFar === 1 ? 6 : hintsSoFar === 2 ? 3 : 0);
+  const mood: Mood = solved ? 'dancing' : error ? 'crying' : recording ? 'excited' : busy ? 'pebble' : 'hello';
 
   return (
     <View style={{ flex: 1 }}>
       <TopBar
-        title="Let's think!"
+        title={hint ? '' : "Let's think!"}
         onBack={onBack}
         right={
-          hint ? (
-            <View style={[styles.badge, { backgroundColor: STYLE_COLORS[hint.style] ?? colors.blue }]}>
-              <Text style={styles.badgeText}>
-                Hint L{hint.level} · {hint.style}
-              </Text>
+          <View style={styles.topRight}>
+            {hint ? <Pill label={`HINT ${hint.level} · ${hint.style.replace('-', ' ').toUpperCase()}`} color={STYLE_COLORS[hint.style] ?? colors.blue} /> : null}
+            <View style={styles.pot}>
+              <Text style={styles.potText}>🪨 +{potential}</Text>
             </View>
-          ) : null
+          </View>
         }
       />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <Card style={styles.problem}>
-          <Text style={styles.problemLabel}>YOUR PROBLEM · {problem.topic}</Text>
+        <View style={styles.problem}>
+          <Text style={styles.problemLabel}>YOUR PROBLEM · {problem.topic.toUpperCase()}</Text>
           <Text style={styles.problemText}>{problem.text}</Text>
-        </Card>
-
-        {ui && <GenUIRenderer spec={ui} onEvent={onUIEvent} />}
-
-        <View style={[styles.bubble, shadow]}>
-          <Text style={styles.owl}>🦉</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.tutorText}>{reply.text}</Text>
-            <Pressable onPress={() => speakReply(reply.text, reply.audioBase64)} hitSlop={8}>
-              <Text style={styles.replay}>🔊 Say it again</Text>
-            </Pressable>
-          </View>
         </View>
 
         {transcript && (
           <View style={styles.kidBubble}>
-            <Text style={styles.kidText}>You: “{transcript}”</Text>
+            <Text style={styles.kidLabel}>YOU SAID</Text>
+            <Text style={styles.kidText}>“{transcript}”</Text>
           </View>
+        )}
+
+        <View style={styles.tutorRow}>
+          <Bounce distance={busy ? 5 : 2}>
+            <Mascot mood={mood} size={76} />
+          </Bounce>
+          <SpeechBubble style={{ flex: 1 }}>
+            {busy ? <ThinkingDots /> : <WordReveal key={reply.text} text={reply.text} />}
+            {!busy && (
+              <Pressable onPress={() => speakReply(reply.text, reply.audioBase64)} hitSlop={8} style={styles.replayBtn}>
+                <Text style={styles.replay}>🔊 SAY IT AGAIN</Text>
+              </Pressable>
+            )}
+          </SpeechBubble>
+        </View>
+
+        {ui && <GenUIRenderer spec={ui} onEvent={onUIEvent} onSay={sayStep} />}
+
+        {prepared && ui !== prepared && !solved && (
+          <Pop>
+            <Pressable onPress={showMe}>
+              {({ pressed }) => (
+                <View style={[styles.showMe, { borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 }]}>
+                  <Bounce distance={4}>
+                    <Text style={{ fontSize: 34 }}>🎬</Text>
+                  </Bounce>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.showMeTitle}>SHOW ME HOW</Text>
+                    <Text style={styles.showMeSub}>Nudge made a little movie for this problem</Text>
+                  </View>
+                  <Icon name="play-circle" size={36} color="#fff" />
+                </View>
+              )}
+            </Pressable>
+          </Pop>
         )}
 
         {error && <ErrorBox message={error} onRetry={lastReq.current ? () => sendTurn(lastReq.current!) : undefined} />}
       </ScrollView>
 
       {solved ? (
-        <View style={[styles.bottom, styles.celebrate]}>
-          <Text style={styles.party}>🎉 🌟 🎉</Text>
-          <Text style={styles.celebrateText}>You did it! Awesome thinking!</Text>
-          <View style={styles.row}>
-            <BigButton label="Next problem" onPress={onNext} color={colors.green} style={{ flex: 1 }} disabled={finishing} />
-            <BigButton label={finishing ? 'Saving…' : 'Finish'} onPress={finish} color={colors.purple} style={{ flex: 1 }} disabled={finishing} />
+        <BottomBar style={styles.celebrate}>
+          <View style={styles.solvedRow}>
+            <View style={styles.solvedCheck}>
+              <Icon name="check-bold" size={30} color={colors.green} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.celebrateTitle}>Amazing!</Text>
+              <Text style={styles.celebrateText}>You found the answer yourself!</Text>
+            </View>
           </View>
-        </View>
+          <BigButton label="Continue" onPress={onSolved} color={colors.green} />
+        </BottomBar>
       ) : (
-        <View style={styles.bottom}>
-          <Pressable
-            onPress={recording ? stopRecording : startRecording}
-            disabled={busy && !recording}
-            accessibilityRole="button"
-            accessibilityLabel={micLabel}
-            style={({ pressed }) => [
-              styles.mic,
-              shadow,
-              {
-                backgroundColor: recording ? colors.red : busy ? colors.inkSoft : colors.primary,
-                transform: [{ scale: pressed ? 0.94 : recording ? 1.08 : 1 }],
-              },
-            ]}
-          >
-            {busy && !recording ? <ActivityIndicator color="#fff" size="large" /> : <Text style={styles.micIcon}>{recording ? '⏹' : '🎤'}</Text>}
-          </Pressable>
-          <Text style={styles.micLabel}>{micLabel}</Text>
+        <BottomBar style={styles.bottom}>
+          {idle && !busy && !recording && (
+            <Pop>
+              <Pressable onPress={prepared && ui !== prepared ? showMe : poke} style={styles.nudge}>
+                <Mascot mood="excited" size={44} />
+                <Text style={styles.nudgeText}>
+                  {prepared && ui !== prepared ? 'Psst! Want to watch a tiny movie about it? 🎬' : ui ? 'Psst! Try touching the picture 👆' : 'Psst! Tap the mic and tell me your idea 🎤'}
+                </Text>
+              </Pressable>
+            </Pop>
+          )}
+          <View style={styles.micRow}>
+            <Pressable
+              onPress={recording ? stopRecording : startRecording}
+              disabled={busy && !recording}
+              accessibilityRole="button"
+              accessibilityLabel={micLabel}
+            >
+              {({ pressed }) => {
+                const bg = recording ? colors.red : busy ? colors.track : colors.primary;
+                const edge = recording ? colors.redDark : busy ? colors.lineDark : colors.primaryDark;
+                return (
+                  <PulseIf on={idle && !busy}>
+                  <View
+                    style={[
+                      styles.mic,
+                      { backgroundColor: bg, borderBottomColor: edge, borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 },
+                    ]}
+                  >
+                    {busy && !recording ? <ActivityIndicator color={colors.inkSoft} size="large" /> : <Text style={styles.micIcon}>{recording ? '⏹' : '🎤'}</Text>}
+                  </View>
+                  </PulseIf>
+                );
+              }}
+            </Pressable>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={styles.micLabel}>{micLabel.toUpperCase()}</Text>
+              <Text style={styles.micSub}>{recording ? "I'm listening…" : 'Tell me what you think!'}</Text>
+            </View>
+          </View>
           <View style={styles.inputRow}>
             <TextInput
               value={text}
-              onChangeText={setText}
+              onChangeText={(t) => {
+                setText(t);
+                poke();
+              }}
               onSubmitEditing={sendText}
               placeholder="…or type here"
-              placeholderTextColor={colors.inkSoft}
+              placeholderTextColor={colors.trackText}
               style={styles.input}
               editable={!busy}
               returnKeyType="send"
             />
             <BigButton small label="Send" onPress={sendText} disabled={busy || !text.trim()} color={colors.blue} />
           </View>
-          <Pressable onPress={finish} disabled={finishing} hitSlop={8}>
+          <Pressable onPress={finish} disabled={finishing} hitSlop={8} style={{ alignSelf: 'center' }}>
             <Text style={styles.finishLink}>{finishing ? 'Saving…' : 'Finish for today'}</Text>
           </Pressable>
-        </View>
+        </BottomBar>
       )}
     </View>
   );
 }
 
+/** Tutor text appears word by word — motion keeps eyes on it while it is spoken. */
+function WordReveal({ text }: { text: string }) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    setN(0);
+    const id = setInterval(() => setN((k) => (k >= words.length ? k : k + 1)), 85);
+    return () => clearInterval(id);
+  }, [text, words.length]);
+  return (
+    <Text style={styles.tutorText}>
+      {words.map((w, i) => (
+        <Text key={i} style={{ opacity: i < n ? 1 : 0.08 }}>
+          {w}{' '}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+function ThinkingDots() {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.timing(v, { toValue: 3, duration: 1200, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [v]);
+  return (
+    <View style={{ flexDirection: 'row', gap: 6, paddingVertical: 8 }}>
+      {[0, 1, 2].map((i) => (
+        <Animated.View
+          key={i}
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            backgroundColor: colors.primary,
+            transform: [{ translateY: v.interpolate({ inputRange: [i, i + 0.5, i + 1, 3], outputRange: [0, -8, 0, 0], extrapolate: 'clamp' }) }],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+function PulseIf({ on, children }: { on: boolean; children: React.ReactNode }) {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!on) {
+      v.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(v, { toValue: 1, duration: 500, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 0, duration: 500, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [on, v]);
+  return <Animated.View style={{ transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }] }}>{children}</Animated.View>;
+}
+
 const styles = StyleSheet.create({
-  scroll: { padding: 16, gap: 16, paddingBottom: 24 },
-  problem: { backgroundColor: '#FFF1C9' },
-  problemLabel: { fontSize: 13, fontWeight: '800', color: colors.inkSoft, letterSpacing: 1, marginBottom: 6 },
-  problemText: { fontSize: font.body + 1, color: colors.ink, lineHeight: 28, fontWeight: '600' },
-  bubble: {
+  showMe: {
     flexDirection: 'row',
-    gap: 12,
-    backgroundColor: colors.card,
-    borderRadius: radius,
-    padding: 16,
-    alignItems: 'flex-start',
-  },
-  owl: { fontSize: 40 },
-  tutorText: { fontSize: font.big - 2, color: colors.ink, lineHeight: 31, fontWeight: '600' },
-  replay: { color: colors.blue, fontSize: font.small, marginTop: 8, fontWeight: '700' },
-  kidBubble: { alignSelf: 'flex-end', backgroundColor: '#DDEBFF', borderRadius: 18, padding: 12, maxWidth: '85%' },
-  kidText: { fontSize: font.body, color: colors.ink },
-  badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
-  badgeText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  bottom: {
     alignItems: 'center',
-    padding: 16,
-    paddingBottom: 20,
-    gap: 8,
-    borderTopWidth: 2,
-    borderTopColor: colors.line,
-    backgroundColor: colors.bg,
+    gap: 12,
+    backgroundColor: colors.purple,
+    borderBottomColor: colors.purpleDark,
+    borderRadius: 20,
+    padding: 14,
   },
-  mic: { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center' },
-  micIcon: { fontSize: 46, color: '#fff' },
-  micLabel: { fontSize: font.body, fontWeight: '800', color: colors.ink },
-  inputRow: { flexDirection: 'row', gap: 8, alignSelf: 'stretch', alignItems: 'center' },
+  showMeTitle: { fontFamily: ff.black, color: '#fff', fontSize: 17, letterSpacing: 1 },
+  showMeSub: { fontFamily: ff.bold, color: 'rgba(255,255,255,0.85)', fontSize: 13 },
+  nudge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.yellowLight, borderRadius: 14, padding: 6, borderWidth: 2, borderColor: '#FFE08A' },
+  nudgeText: { flex: 1, fontFamily: ff.black, fontSize: 14, color: colors.ink },
+  scroll: { padding: 16, gap: 16, paddingBottom: 24 },
+  problem: {
+    backgroundColor: colors.yellowLight,
+    borderWidth: 2,
+    borderColor: '#FFE08A',
+    borderBottomWidth: 4,
+    borderRadius: 16,
+    padding: 16,
+  },
+  problemLabel: { fontFamily: ff.black, fontSize: 12, color: colors.yellowDark, letterSpacing: 1, marginBottom: 6 },
+  problemText: { fontFamily: ff.bold, fontSize: font.body + 1, color: colors.ink, lineHeight: 28 },
+  tutorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginLeft: -6 },
+  tutorText: { fontFamily: ff.regular, fontSize: font.body + 1, lineHeight: 27, color: colors.ink },
+  replayBtn: { marginTop: 8, alignSelf: 'flex-start' },
+  replay: { color: colors.blue, fontSize: 13, fontFamily: ff.black, letterSpacing: 0.6 },
+  kidBubble: {
+    alignSelf: 'flex-end',
+    backgroundColor: colors.blueLight,
+    borderWidth: 2,
+    borderColor: colors.blueBorder,
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    maxWidth: '85%',
+  },
+  kidLabel: { fontFamily: ff.black, fontSize: 11, color: colors.blue, letterSpacing: 1 },
+  kidText: { fontFamily: ff.bold, fontSize: font.body, color: colors.blueDark, marginTop: 2 },
+  bottom: { gap: 12 },
+  micRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  mic: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  micIcon: { fontSize: 30, color: '#fff' },
+  micLabel: { fontFamily: ff.black, fontSize: font.body, color: colors.ink, letterSpacing: 0.6 },
+  micSub: { fontFamily: ff.regular, fontSize: font.small, color: colors.inkSoft },
+  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   input: {
     flex: 1,
     borderWidth: 2,
     borderColor: colors.line,
-    backgroundColor: '#fff',
+    backgroundColor: '#F7F7F7',
     borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 11,
     fontSize: font.body,
+    fontFamily: ff.regular,
     color: colors.ink,
   },
-  finishLink: { color: colors.inkSoft, fontSize: font.small, textDecorationLine: 'underline', marginTop: 2 },
-  celebrate: { backgroundColor: '#E5FBEF', gap: 12 },
-  party: { fontSize: 44 },
-  celebrateText: { fontSize: font.big, fontWeight: '900', color: colors.ink, textAlign: 'center' },
-  row: { flexDirection: 'row', gap: 12, alignSelf: 'stretch' },
+  finishLink: { color: colors.trackText, fontSize: 13, fontFamily: ff.black, letterSpacing: 0.6, textTransform: 'uppercase' },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pot: { borderWidth: 2, borderColor: colors.line, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  potText: { fontFamily: ff.black, fontSize: 13, color: colors.otter },
+  solvedRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  solvedCheck: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  celebrate: { backgroundColor: colors.greenLight, borderTopColor: '#BDEBD1' },
+  celebrateTitle: { fontFamily: ff.display, fontSize: 26, color: colors.greenDark },
+  celebrateText: { fontFamily: ff.bold, fontSize: font.small, color: colors.greenDark },
 });

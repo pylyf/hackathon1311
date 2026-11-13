@@ -197,10 +197,15 @@ export function textLeaks(text: string, ans: HiddenAnswer, ctx: LeakContext): bo
   return false;
 }
 
-/** Leak check for UI specs: shaded fractions / marks / jumps / values equal to the answer + text labels. */
+/** Leak check for UI specs (blocks and whole scenes): values equal to the answer + any text labels. */
 export function uiLeaks(ui: UISpec | null, ans: HiddenAnswer, ctx: LeakContext): boolean {
   if (!ui) return false;
-  const texts: string[] = [ui.caption ?? ''];
+  if (ui.type === 'Scene') {
+    return ui.steps.some((st) => textLeaks(st.say ?? '', ans, ctx) || st.blocks.some((b) => uiLeaks(b, ans, ctx)));
+  }
+  // a number that equals the answer leaks unless that number is a given in the story
+  const shownNumberLeaks = (v: number) => approxEq(v, ans.value) && textLeaks(String(v), ans, ctx);
+  const texts: string[] = ['caption' in ui ? ui.caption ?? '' : ''];
   switch (ui.type) {
     case 'FractionBars':
       for (const r of ui.rows) {
@@ -208,14 +213,23 @@ export function uiLeaks(ui: UISpec | null, ans: HiddenAnswer, ctx: LeakContext):
         if (r.denominator > 0 && approxEq(r.shaded / r.denominator, ans.value)) return true;
       }
       break;
+    case 'FractionPie':
+      for (const p of ui.pies) {
+        texts.push(p.label ?? '');
+        if (p.parts > 0 && approxEq(p.shaded / p.parts, ans.value)) return true;
+      }
+      break;
     case 'NumberLine':
+    case 'Ruler':
       for (const m of ui.marks ?? []) {
         texts.push(m.label ?? '');
         if (approxEq(m.value, ans.value)) return true;
       }
-      for (const j of ui.jumps ?? []) {
-        texts.push(j.label ?? '');
-        if (approxEq(j.to, ans.value)) return true;
+      if (ui.type === 'NumberLine') {
+        for (const j of ui.jumps ?? []) {
+          texts.push(j.label ?? '');
+          if (approxEq(j.to, ans.value)) return true;
+        }
       }
       break;
     case 'BarModel':
@@ -223,14 +237,44 @@ export function uiLeaks(ui: UISpec | null, ans: HiddenAnswer, ctx: LeakContext):
         texts.push(b.label);
         for (const p of b.parts) {
           texts.push(p.label ?? '');
-          // a part equal to the answer leaks unless that number is a given in the story
-          if (!p.unknown && typeof p.value === 'number' && approxEq(p.value, ans.value)
-            && textLeaks(String(p.value), ans, ctx)) return true;
+          if (!p.unknown && typeof p.value === 'number' && shownNumberLeaks(p.value)) return true;
         }
       }
       break;
+    case 'BarChart':
+      for (const b of ui.bars) {
+        texts.push(b.label);
+        if (!b.unknown && shownNumberLeaks(b.value)) return true;
+      }
+      break;
+    case 'Counters': {
+      for (const g of ui.groups) {
+        texts.push(g.label ?? '');
+        if (shownNumberLeaks(g.count)) return true;
+      }
+      const last = ui.groups[ui.groups.length - 1];
+      if (ui.crossOut && last && approxEq(last.count - ui.crossOut, ans.value)) return true; // shows what is left
+      break;
+    }
+    case 'PlaceValue':
+      if (shownNumberLeaks(ui.number)) return true;
+      break;
     case 'UnitLadder':
       if (typeof ui.value === 'number' && ans.unit && ui.fromUnit === ans.unit && approxEq(ui.value, ans.value)) return true;
+      break;
+    case 'Equation':
+      texts.push(...ui.lines);
+      break;
+    case 'Compare':
+      texts.push(ui.left, ui.right);
+      break;
+    case 'Choice':
+      texts.push(ui.question); // options may include the answer: the child still has to choose
+      break;
+    case 'Callout':
+      texts.push(ui.text);
+      break;
+    default:
       break;
   }
   return texts.some((x) => textLeaks(x, ans, ctx));

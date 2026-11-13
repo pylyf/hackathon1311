@@ -6,6 +6,8 @@ import { pickStyle, rewardStyle } from './bandit.js';
 import { checkAnswer, mentionsAnswerAnywhere, saidCorrectAnswer, textLeaks, uiLeaks, approxEq } from './guard.js';
 import { createMessage, textOf } from './llm.js';
 import { interests, relevantNotes } from './memory.js';
+import { profileLine } from './profile.js';
+import { brainPrompt, markRecipeUsed, peekPreparedScene } from './brain.js';
 import { mockAlreadySolved, mockHint, mockPraise } from './mock.js';
 import type { ProblemState } from './state.js';
 import { logEvent } from './store.js';
@@ -106,6 +108,7 @@ function systemPrompt(p: ProblemState, notes: MemoryNote[]): string {
   const ans = `${p.answer.value}${p.answer.unit ? ` ${p.answer.unit}` : ''} (computed as ${p.answer.expression})`;
   const mem = notes.map((n) => `- [${n.kind}, ${n.topic}, seen ${n.seen}x] ${n.text}`).join('\n') || '- (nothing yet)';
   return `You are Nudge, a warm, playful voice math tutor for a primary-school child (age 6-10). You help them solve ONE homework problem by themselves.
+${profileLine()}
 
 THE PROBLEM: ${p.text}
 Asks: ${p.question}
@@ -124,6 +127,10 @@ HOW TO SPEAK: your reply is read aloud by text-to-speech. 1-2 short sentences (m
 
 WHAT WE KNOW ABOUT THIS CHILD (use it; interests are great for story hints):
 ${mem}
+
+${brainPrompt(p.topic)}
+
+VISUALS: prefer an animated Scene (2-4 steps) that builds the idea one step at a time; reuse your recipes when they fit. A visual is your best tool to keep a distractible child's attention: when the child is stuck, unsure or off-topic, show something they can touch (Counters, FractionPie, Slider, Choice).
 
 TOOLS: show_component draws a visual; check_answer verifies a value the child said; assess_turn classifies the child's message when the app asks you to. Write your spoken reply as plain text after any tool calls.`;
 }
@@ -171,7 +178,7 @@ async function claudeGenerate(opts: {
   for (let i = 0; i < 5; i++) {
     const msg = await createMessage({
       model: MODEL_TUTOR,
-      max_tokens: 4000,
+      max_tokens: 8000,
       output_config: { effort: 'low' },
       system: systemPrompt(p, notes),
       tools: opts.mode === 'praise' ? undefined : TOOLS,
@@ -314,8 +321,13 @@ export async function tutorTurn(p: ProblemState, transcript: string, uiEvent?: U
         ui = null;
       }
     }
-    // visual style / L3 must show something: fall back to the problem's starter visual
-    if (!ui && (style === 'visual' || level === 3) && !uiLeaks(p.starterVisual, p.answer, ctx)) ui = p.starterVisual;
+    // visual style / L3 must show something: the prepared explainer scene, else the starter visual
+    if (!ui && (style === 'visual' || level === 3)) {
+      const prepared = await peekPreparedScene(p.id);
+      if (prepared && !uiLeaks(prepared, p.answer, ctx)) ui = prepared;
+      else if (!uiLeaks(p.starterVisual, p.answer, ctx)) ui = p.starterVisual;
+    }
+    if (ui?.type === 'Scene') markRecipeUsed(ui);
   }
   // final safety net (also covers mock templates)
   if (textLeaks(text, p.answer, ctx)) text = FALLBACK_L1;
@@ -327,7 +339,7 @@ export async function tutorTurn(p: ProblemState, transcript: string, uiEvent?: U
   p.hintsGiven += 1;
   p.pendingHints.push({ style, level, turnsSeen: 0 });
   p.history.push({ role: 'tutor', text });
-  logEvent({ sessionId: p.sessionId, problemId: p.id, type: 'hint', topic: p.topic, level, style, text, ui: ui?.type ?? null });
+  logEvent({ sessionId: p.sessionId, problemId: p.id, type: 'hint', topic: p.topic, level, style, text, ui: ui?.type ?? null, scene: ui?.type === 'Scene' ? ui.title ?? 'untitled' : undefined });
   return { reply: await finish(text, ui, { level, style }), solved: false };
 }
 

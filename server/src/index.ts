@@ -3,12 +3,15 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { randomUUID } from 'node:crypto';
 import { CHILD_ID, ELEVEN_TTS_MODEL, HAS_ELEVEN, MOCK, MODEL_SOLVER, MODEL_TUTOR, PORT } from './config.js';
 import type {
-  LearnedResponse, ProblemRequest, ProblemResponse, SessionEndRequest, SessionEndResponse,
+  ChildProfile, LearnedResponse, ProblemRequest, ProfileResponse, ProblemResponse, SessionEndRequest, SessionEndResponse,
   SessionStartResponse, TurnRequest, TurnResponse,
 } from './contract.js';
 import { loadBandit } from './bandit.js';
 import { loadMemory } from './memory.js';
 import { NotAProblemError, parseProblem } from './problem.js';
+import { loadProfile, saveProfile } from './profile.js';
+import { computeProgress } from './progress.js';
+import { brain, getPreparedScene, improve, prepareScene } from './brain.js';
 import { computeStats, reflect } from './reflect.js';
 import { createSession, getOrCreateSession, getSession, persistSessions, type ProblemState } from './state.js';
 import { ensureDataDir, logEvent } from './store.js';
@@ -39,16 +42,18 @@ app.post('/session/start', route(async (_req, res) => {
 }));
 
 app.post('/problem', route(async (req, res) => {
-  const { sessionId, imageBase64, mediaType } = (req.body ?? {}) as Partial<ProblemRequest>;
-  if (!sessionId || !imageBase64) throw new HttpError(400, 'sessionId and imageBase64 are required');
+  const { sessionId, imageBase64, mediaType, exampleText } = (req.body ?? {}) as Partial<ProblemRequest>;
+  if (!sessionId || (!imageBase64 && !exampleText?.trim())) throw new HttpError(400, 'sessionId and imageBase64 (or exampleText) are required');
   const mt = mediaType === 'image/png' ? 'image/png' : 'image/jpeg';
-  const data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+  const input = exampleText?.trim()
+    ? { text: exampleText.trim().slice(0, 1000) }
+    : { imageBase64: imageBase64!.replace(/^data:image\/\w+;base64,/, ''), mediaType: mt as 'image/jpeg' | 'image/png' };
   const session = getOrCreateSession(sessionId, CHILD_ID);
 
   let parsed;
   try {
     // relevant notes before the topic is known: interests only (topic='any' notes)
-    parsed = await parseProblem(data, mt, loadMemory().filter((n) => n.kind === 'interest'));
+    parsed = await parseProblem(input, loadMemory().filter((n) => n.kind === 'interest'));
   } catch (e) {
     if (e instanceof NotAProblemError) throw new HttpError(422, e.message);
     throw e;
@@ -71,6 +76,7 @@ app.post('/problem', route(async (req, res) => {
   };
   session.problems[p.id] = p;
   logEvent({ sessionId, problemId: p.id, type: 'problem', topic: p.topic, text: p.text, verified: p.answer.verified });
+  prepareScene(p); // the "Show me" explainer is built in the background while the intro plays
   const intro = await introReply(p, parsed.introText);
   persistSessions();
   const body: ProblemResponse = { problemId: p.id, text: p.text, topic: p.topic, intro };
@@ -126,13 +132,49 @@ app.post('/session/end', route(async (req, res) => {
   }
   for (const p of Object.values(s.problems)) flushPendingHints(p);
   const notes = await reflect(sessionId);
+  let changes: Awaited<ReturnType<typeof improve>> = [];
+  try {
+    changes = await improve(sessionId, notes);
+  } catch (e) {
+    console.warn('[brain] improve failed:', (e as Error).message);
+  }
   s.ended = true;
   s.endNotes = notes;
-  logEvent({ sessionId, type: 'session_end', notes: notes.length });
+  logEvent({ sessionId, type: 'session_end', notes: notes.length, changes: changes.length });
   persistSessions();
-  const body: SessionEndResponse = { notes };
+  const body: SessionEndResponse = { notes, changes };
   res.json(body);
 }));
+
+app.get('/profile', (_req, res) => {
+  const body: ProfileResponse = { profile: loadProfile() };
+  res.json(body);
+});
+
+app.post('/profile', route(async (req, res) => {
+  const input = (req.body ?? {}) as Partial<ChildProfile>;
+  if (typeof input.name !== 'string' || !input.name.trim()) throw new HttpError(400, 'name is required');
+  const body: ProfileResponse = { profile: saveProfile(input) };
+  res.json(body);
+}));
+
+app.get('/problem/:id/scene', route(async (req, res) => {
+  res.json(await getPreparedScene(String(req.params.id)));
+}));
+
+app.get('/brain', (_req, res) => {
+  res.json(brain());
+});
+
+app.post('/tts', route(async (req, res) => {
+  const text = String((req.body ?? {}).text ?? '').slice(0, 400);
+  if (!text.trim()) throw new HttpError(400, 'text is required');
+  res.json({ audioBase64: await synthesize(text) });
+}));
+
+app.get('/progress', (_req, res) => {
+  res.json(computeProgress());
+});
 
 app.get('/learned', (_req, res) => {
   const body: LearnedResponse = { bandit: loadBandit(), memory: loadMemory(), stats: computeStats() };

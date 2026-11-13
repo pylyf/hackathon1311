@@ -1,9 +1,16 @@
 import { StatusBar } from 'expo-status-bar';
-import React, { useCallback, useEffect, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+import { useFonts } from 'expo-font';
+import { Nunito_600SemiBold, Nunito_800ExtraBold, Nunito_900Black } from '@expo-google-fonts/nunito';
+import { Fredoka_600SemiBold, Fredoka_700Bold } from '@expo-google-fonts/fredoka';
 import { api, errMsg } from './src/api';
-import type { MemoryNote, ProblemResponse } from './src/contract';
-import { colors } from './src/theme';
+import type { Example } from './src/examples';
+import type { BrainChange, ChildProfile, MemoryNote, ProblemResponse, ProgressResponse, Topic } from './src/contract';
+import ResultScreen from './src/screens/ResultScreen';
+import { colors, ff } from './src/theme';
+import { Mascot } from './src/ui';
+import OnboardingScreen from './src/screens/OnboardingScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import PickScreen from './src/screens/PickScreen';
 import TalkScreen from './src/screens/TalkScreen';
@@ -12,14 +19,43 @@ import DemoScreen from './src/screens/DemoScreen';
 import { stopSpeaking } from './src/audio';
 
 type Route =
+  | { name: 'splash' }
+  | { name: 'onboarding' }
   | { name: 'home' }
-  | { name: 'pick' }
+  | { name: 'pick'; topic?: Topic; example?: Example }
   | { name: 'talk'; problem: ProblemResponse }
-  | { name: 'learned'; newNotes?: MemoryNote[] }
+  | { name: 'result'; before: ProgressResponse | null; after: ProgressResponse }
+  | { name: 'learned'; newNotes?: MemoryNote[]; changes?: BrainChange[] }
   | { name: 'demo' };
 
 export default function App() {
-  const [route, setRoute] = useState<Route>({ name: 'home' });
+  const [route, setRoute] = useState<Route>({ name: 'splash' });
+  const [profile, setProfile] = useState<ChildProfile | null>(null);
+  const [fontsLoaded, fontError] = useFonts({
+    Nunito_600SemiBold,
+    Nunito_800ExtraBold,
+    Nunito_900Black,
+    Fredoka_600SemiBold,
+    Fredoka_700Bold,
+  });
+  const fontsReady = fontsLoaded || !!fontError;
+  const progressBefore = useRef<ProgressResponse | null>(null);
+
+  // snapshot progress when a problem starts, so the result screen can show what changed
+  const startProblem = (problem: ProblemResponse) => {
+    progressBefore.current = null;
+    api.progress().then((p) => (progressBefore.current = p)).catch(() => {});
+    go({ name: 'talk', problem });
+  };
+
+  const solved = async () => {
+    try {
+      const after = await api.progress();
+      go({ name: 'result', before: progressBefore.current, after });
+    } catch {
+      go({ name: 'pick' });
+    }
+  };
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
@@ -39,6 +75,22 @@ export default function App() {
     startSession().catch(() => {});
   }, [startSession]);
 
+  // Splash: show the otter for a moment while we check whether onboarding is done.
+  useEffect(() => {
+    if (!fontsReady) return;
+    let alive = true;
+    const minDelay = new Promise((r) => setTimeout(r, 1400));
+    const load = api.profile().then((r) => r.profile).catch(() => undefined); // undefined = server unreachable
+    Promise.all([load, minDelay]).then(([p]) => {
+      if (!alive) return;
+      if (p) setProfile(p);
+      setRoute(p === null ? { name: 'onboarding' } : { name: 'home' });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [fontsReady]);
+
   const ensureSession = useCallback(async () => sessionId ?? (await startSession()), [sessionId, startSession]);
 
   const go = (r: Route) => {
@@ -49,20 +101,35 @@ export default function App() {
   const finish = async () => {
     const id = sessionId;
     if (!id) return go({ name: 'learned' });
-    const { notes } = await api.endSession(id); // errors are shown by TalkScreen
+    const { notes, changes } = await api.endSession(id); // errors are shown by TalkScreen
     setSessionId(null);
     startSession().catch(() => {});
-    go({ name: 'learned', newNotes: notes });
+    go({ name: 'learned', newNotes: notes, changes });
   };
 
   let screen: React.ReactNode;
   switch (route.name) {
+    case 'splash':
+      return <Splash />;
+    case 'onboarding':
+      screen = (
+        <OnboardingScreen
+          onDone={(p) => {
+            setProfile(p);
+            go({ name: 'pick' });
+          }}
+        />
+      );
+      break;
     case 'home':
       screen = (
         <HomeScreen
+          profile={profile}
+          onRedoIntro={() => go({ name: 'onboarding' })}
           sessionError={sessionError}
           onRetrySession={() => startSession().catch(() => {})}
           onSnap={() => go({ name: 'pick' })}
+          onExample={(example) => go({ name: 'pick', example })}
           onLearned={() => go({ name: 'learned' })}
           onDemo={() => go({ name: 'demo' })}
         />
@@ -71,9 +138,12 @@ export default function App() {
     case 'pick':
       screen = (
         <PickScreen
+          key={route.example?.id ?? route.topic ?? 'all'}
+          autoExample={route.example}
           ensureSession={ensureSession}
+          topic={route.topic}
           onBack={() => go({ name: 'home' })}
-          onProblem={(problem) => go({ name: 'talk', problem })}
+          onProblem={startProblem}
         />
       );
       break;
@@ -84,13 +154,16 @@ export default function App() {
           sessionId={sessionId ?? ''}
           problem={route.problem}
           onBack={() => go({ name: 'home' })}
-          onNext={() => go({ name: 'pick' })}
+          onSolved={solved}
           onFinish={finish}
         />
       );
       break;
+    case 'result':
+      screen = <ResultScreen before={route.before} after={route.after} onNext={() => go({ name: 'pick' })} onFinish={finish} />;
+      break;
     case 'learned':
-      screen = <LearnedScreen newNotes={route.newNotes} onBack={() => go({ name: 'home' })} />;
+      screen = <LearnedScreen newNotes={route.newNotes} changes={route.changes} onBack={() => go({ name: 'home' })} />;
       break;
     case 'demo':
       screen = <DemoScreen onBack={() => go({ name: 'home' })} />;
@@ -105,11 +178,26 @@ export default function App() {
   );
 }
 
+function Splash() {
+  return (
+    <View style={styles.splash}>
+      <StatusBar style="light" />
+      <View style={styles.splashOtter}>
+        <Mascot mood="hello" size={190} />
+      </View>
+      <Text style={styles.wordmark}>nudge</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  splash: { flex: 1, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', gap: 28 },
+  splashOtter: { width: 230, height: 230, borderRadius: 115, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  wordmark: { fontFamily: ff.display, fontSize: 56, color: '#fff', letterSpacing: 1 },
   root: {
     flex: 1,
     backgroundColor: colors.bg,
-    paddingTop: Platform.OS === 'web' ? 8 : Platform.OS === 'android' ? 36 : 50,
+    paddingTop: Platform.OS === 'web' ? 4 : Platform.OS === 'android' ? 32 : 50,
   },
   inner: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
 });

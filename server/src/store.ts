@@ -10,6 +10,10 @@ export const FILES = {
   memory: path.join(DATA_DIR, 'memory.json'),
   events: path.join(DATA_DIR, 'events.jsonl'),
   sessions: path.join(DATA_DIR, 'sessions.json'),
+  profile: path.join(DATA_DIR, 'profile.json'),
+  skills: path.join(DATA_DIR, 'skills.json'),
+  recipes: path.join(DATA_DIR, 'recipes.json'),
+  brainLog: path.join(DATA_DIR, 'brain.jsonl'),
 };
 
 export function ensureDataDir(): void {

@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { api, errMsg } from '../api';
-import type { ProblemResponse } from '../contract';
-import { colors, font } from '../theme';
-import { BigButton, ErrorBox, Loading, TopBar } from '../ui';
+import type { ProblemResponse, Topic } from '../contract';
+import { EXAMPLES, type Example } from '../examples';
+import { Icon, TOPIC } from '../game';
+import { colors, ff, font } from '../theme';
+import { ErrorBox, Loading, MascotSays, TopBar } from '../ui';
 
 const MAX_SIDE = 1280;
 
@@ -34,10 +36,14 @@ async function toJpegBase64(asset: Picked): Promise<{ base64: string; mediaType:
 
 export default function PickScreen({
   ensureSession,
+  topic,
+  autoExample,
   onBack,
   onProblem,
 }: {
   ensureSession: () => Promise<string>;
+  topic?: Topic;
+  autoExample?: Example;
   onBack: () => void;
   onProblem: (p: ProblemResponse) => void;
 }) {
@@ -45,6 +51,28 @@ export default function PickScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastAsset, setLastAsset] = useState<Picked | null>(null);
+  const [example, setExample] = useState<Example | null>(null);
+  const [filter, setFilter] = useState<Topic | 'all'>(topic ?? 'all');
+
+  // started from an example card on the home screen
+  useEffect(() => {
+    if (autoExample) sendExample(autoExample);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const sendExample = async (ex: Example) => {
+    setError(null);
+    setExample(ex);
+    setPreview(null);
+    setBusy(true);
+    try {
+      const sessionId = await ensureSession();
+      onProblem(await api.problem({ sessionId, exampleText: ex.text }));
+    } catch (e) {
+      setError(errMsg(e));
+      setBusy(false);
+    }
+  };
 
   const send = async (asset: Picked) => {
     setError(null);
@@ -77,6 +105,7 @@ export default function PickScreen({
       }
       if (result.canceled || !result.assets?.length) return;
       const a = result.assets[0];
+      setExample(null);
       const asset: Picked = { uri: a.uri, width: a.width, height: a.height, base64: a.base64, mimeType: a.mimeType };
       setPreview(a.uri);
       setLastAsset(asset);
@@ -87,42 +116,147 @@ export default function PickScreen({
   };
 
   const isWeb = Platform.OS === 'web';
+  const shown = EXAMPLES.filter((e) => filter === 'all' || e.topic === filter);
+
+  if (busy) {
+    return (
+      <View style={{ flex: 1 }}>
+        <TopBar title="Snap it!" />
+        <ScrollView contentContainerStyle={styles.container}>
+          {preview && <Image source={{ uri: preview }} style={styles.preview} resizeMode="contain" />}
+          {example && (
+            <View style={[styles.exampleBig, { backgroundColor: example.bg }]}>
+              <Text style={{ fontSize: 64 }}>{example.emoji}</Text>
+              <Text style={styles.exampleBigText}>{example.text}</Text>
+            </View>
+          )}
+          <Loading label="Hmm, let me read your problem…" />
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1 }}>
-      <TopBar title="Snap it!" onBack={busy ? undefined : onBack} />
+      <TopBar title="New problem" onBack={onBack} />
       <ScrollView contentContainerStyle={styles.container}>
+        <MascotSays mood={error ? 'crying' : 'excited'}>
+          {preview ? 'Want to try another picture?' : 'Snap ONE homework problem, or pick a fun one below!'}
+        </MascotSays>
         {preview && <Image source={{ uri: preview }} style={styles.preview} resizeMode="contain" />}
+        {error && <ErrorBox message={error} onRetry={lastAsset ? () => send(lastAsset) : example ? () => sendExample(example) : undefined} />}
 
-        {busy ? (
-          <Loading label="Reading your problem… 🔍" />
-        ) : (
-          <>
-            {!preview && (
-              <Text style={styles.tip}>Take a photo of ONE problem.{'\n'}Make sure the words are easy to see!</Text>
-            )}
-            {error && <ErrorBox message={error} onRetry={lastAsset ? () => send(lastAsset) : undefined} />}
-            {isWeb ? (
-              <>
-                <BigButton label="🖼️  Choose a picture" onPress={() => pick(false)} style={styles.main} />
-                <BigButton label="📷  Use camera" onPress={() => pick(true)} color={colors.blue} small />
-              </>
-            ) : (
-              <>
-                <BigButton label="📷  Take a photo" onPress={() => pick(true)} style={styles.main} />
-                <BigButton label="🖼️  Pick from photos" onPress={() => pick(false)} color={colors.blue} small />
-              </>
-            )}
-          </>
-        )}
+        <View style={styles.photoRow}>
+          <PhotoTile
+            icon="camera"
+            title={isWeb ? 'Camera' : 'Take a photo'}
+            color={colors.primary}
+            dark={colors.primaryDark}
+            onPress={() => pick(true)}
+          />
+          <PhotoTile icon="image-multiple" title={isWeb ? 'Choose file' : 'From photos'} color={colors.blue} dark={colors.blueDark} onPress={() => pick(false)} />
+        </View>
+
+        <View style={styles.divider}>
+          <View style={styles.rule} />
+          <Text style={styles.dividerText}>OR TRY AN EXAMPLE</Text>
+          <View style={styles.rule} />
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+          {(['all', 'word-problems', 'fractions', 'units'] as const).map((f) => {
+            const on = filter === f;
+            const t = f === 'all' ? null : TOPIC[f];
+            return (
+              <Pressable
+                key={f}
+                onPress={() => setFilter(f)}
+                style={[styles.filter, on && { backgroundColor: t?.color ?? colors.ink, borderColor: t?.dark ?? colors.ink }]}
+              >
+                <Text style={[styles.filterText, on && { color: '#fff' }]}>
+                  {t ? `${t.emoji} ${t.label}` : '✨ All'}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.examples}>
+          {shown.map((ex) => {
+            const t = TOPIC[ex.topic];
+            return (
+              <Pressable key={ex.id} onPress={() => sendExample(ex)}>
+                {({ pressed }) => (
+                  <View style={[styles.exCard, { borderBottomWidth: pressed ? 2 : 4, marginTop: pressed ? 2 : 0 }]}>
+                    <View style={[styles.exArt, { backgroundColor: ex.bg }]}>
+                      <Text style={styles.exEmoji}>{ex.emoji}</Text>
+                    </View>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <View style={[styles.exTag, { backgroundColor: t.light }]}>
+                        <Text style={[styles.exTagText, { color: t.dark }]}>{t.label.toUpperCase()}</Text>
+                      </View>
+                      <Text style={styles.exTitle}>{ex.title}</Text>
+                      <Text style={styles.exText} numberOfLines={2}>
+                        {ex.text}
+                      </Text>
+                    </View>
+                    <Icon name="play-circle" size={34} color={t.color} />
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
       </ScrollView>
     </View>
   );
 }
 
+function PhotoTile({ icon, title, color, dark, onPress }: { icon: string; title: string; color: string; dark: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={{ flex: 1 }}>
+      {({ pressed }) => (
+        <View style={[styles.photoTile, { backgroundColor: color, borderBottomColor: dark, borderBottomWidth: pressed ? 2 : 6, marginTop: pressed ? 4 : 0 }]}>
+          <View style={styles.photoIcon}>
+            <Icon name={icon as never} size={34} color="#fff" />
+          </View>
+          <Text style={styles.photoTitle}>{title.toUpperCase()}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { padding: 24, gap: 18, flexGrow: 1, justifyContent: 'center' },
-  preview: { width: '100%', height: 260, borderRadius: 18, backgroundColor: '#eee' },
-  tip: { fontSize: font.body, color: colors.inkSoft, textAlign: 'center', lineHeight: 27 },
-  main: { paddingVertical: 30 },
+  container: { padding: 18, gap: 18, flexGrow: 1, paddingBottom: 40 },
+  preview: { width: '100%', height: 220, borderRadius: 16, backgroundColor: '#F7F7F7', borderWidth: 2, borderColor: colors.line },
+  photoRow: { flexDirection: 'row', gap: 12 },
+  photoTile: { borderRadius: 18, paddingVertical: 18, alignItems: 'center', gap: 8 },
+  photoIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center' },
+  photoTitle: { fontFamily: ff.black, color: '#fff', fontSize: 14, letterSpacing: 0.8 },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  rule: { flex: 1, height: 2, backgroundColor: colors.line },
+  dividerText: { fontFamily: ff.black, fontSize: 13, color: colors.trackText, letterSpacing: 1 },
+  filters: { gap: 8 },
+  filter: { borderWidth: 2, borderColor: colors.line, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff' },
+  filterText: { fontFamily: ff.black, fontSize: 14, color: colors.inkSoft },
+  examples: { gap: 12 },
+  exCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderRadius: 18,
+    padding: 10,
+    backgroundColor: '#fff',
+  },
+  exArt: { width: 74, height: 74, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  exEmoji: { fontSize: 42 },
+  exTag: { alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  exTagText: { fontFamily: ff.black, fontSize: 10, letterSpacing: 0.8 },
+  exTitle: { fontFamily: ff.black, fontSize: font.body, color: colors.ink },
+  exText: { fontFamily: ff.regular, fontSize: 13, color: colors.inkSoft, lineHeight: 18 },
+  exampleBig: { borderRadius: 20, padding: 20, alignItems: 'center', gap: 10 },
+  exampleBigText: { fontFamily: ff.bold, fontSize: font.body, color: colors.ink, textAlign: 'center', lineHeight: 26 },
 });

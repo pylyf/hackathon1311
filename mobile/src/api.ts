@@ -1,4 +1,9 @@
 import type {
+  BrainResponse,
+  ChildProfile,
+  PreparedSceneResponse,
+  ProfileResponse,
+  ProgressResponse,
   LearnedResponse,
   ProblemRequest,
   ProblemResponse,
@@ -50,7 +55,13 @@ export const api = {
   problem: (req: ProblemRequest) => request<ProblemResponse>('POST', '/problem', req, 90000),
   turn: (req: TurnRequest) => request<TurnResponse>('POST', '/turn', req, 90000),
   endSession: (sessionId: string) => request<SessionEndResponse>('POST', '/session/end', { sessionId }, 90000),
+  brain: () => request<BrainResponse>('GET', '/brain'),
+  preparedScene: (problemId: string) => request<PreparedSceneResponse>('GET', `/problem/${problemId}/scene`, undefined, 35000),
+  tts: (text: string) => request<{ audioBase64: string | null }>('POST', '/tts', { text }, 20000),
+  progress: () => request<ProgressResponse>('GET', '/progress', undefined, 8000),
   learned: () => request<LearnedResponse>('GET', '/learned'),
+  profile: () => request<ProfileResponse>('GET', '/profile', undefined, 8000),
+  saveProfile: (p: ChildProfile) => request<ProfileResponse>('POST', '/profile', p),
 };
 
 export function errMsg(e: unknown): string {

@@ -25,12 +25,18 @@
     "plugins": [
       [
         "expo-audio",
-        { "microphonePermission": "Nudge listens when you hold the talk button." }
+        {
+          "microphonePermission": "Nudge listens when you hold the talk button."
+        }
       ],
       [
         "expo-image-picker",
-        { "cameraPermission": "Nudge needs the camera to read your homework." }
-      ]
+        {
+          "cameraPermission": "Nudge needs the camera to read your homework."
+        }
+      ],
+      "expo-image",
+      "expo-font"
     ]
   }
 }

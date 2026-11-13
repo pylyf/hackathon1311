@@ -1,4 +1,5 @@
 // Photo -> structured problem + privately solved, mathjs-verified hidden answer.
+import type Anthropic from '@anthropic-ai/sdk';
 import { evaluate } from 'mathjs';
 import { MOCK, MODEL_SOLVER } from './config.js';
 import type { MemoryNote, Topic, UISpec } from './contract.js';
@@ -7,6 +8,7 @@ import { createJson } from './llm.js';
 import { mockParseProblem } from './mock.js';
 import type { HiddenAnswer } from './state.js';
 import { UI_SPEC_DOC, validateUISpec } from './uispec.js';
+import { profileLine } from './profile.js';
 
 export interface ParsedProblem {
   text: string;
@@ -70,11 +72,21 @@ Fields:
 - introText: what the tutor says out loud first, to the child: 2-3 short, warm, simple sentences that retell the story in kid-friendly words and say what we need to find, then ONE easy opening question about the story (e.g. what do we know / what happens first). It is spoken by text-to-speech: no markdown, no emojis, write fractions in words ("three quarters"). It MUST NOT contain the answer or any hint that gives it away.
 - starterVisualJson: a helpful starting visual for this problem that shows the GIVEN situation, never the result (e.g. for 3/4 - 1/4 show a bar with 3 of 4 parts shaded, not the result). Return "" if no component fits.
 ${UI_SPEC_DOC}
+${profileLine() ? `\nAbout the child: ${profileLine()}` : ''}
 ${interests ? `\nThe child's interests (you may use them in the intro):\n${interests}` : ''}`;
 }
 
-export async function parseProblem(imageBase64: string, mediaType: 'image/jpeg' | 'image/png', notes: MemoryNote[]): Promise<ParsedProblem> {
+export type ProblemInput = { text: string } | { imageBase64: string; mediaType: 'image/jpeg' | 'image/png' };
+
+export async function parseProblem(input: ProblemInput, notes: MemoryNote[]): Promise<ParsedProblem> {
   if (MOCK) return mockParseProblem();
+  const content: Anthropic.Beta.Messages.BetaContentBlockParam[] =
+    'text' in input
+      ? [{ type: 'text', text: `Here is the homework problem as text (no photo):\n\n${input.text}\n\nRead and solve it.` }]
+      : [
+          { type: 'image', source: { type: 'base64', media_type: input.mediaType, data: input.imageBase64 } },
+          { type: 'text', text: 'Read and solve this homework problem.' },
+        ];
 
   const out = await createJson<SolverOutput>({
     model: MODEL_SOLVER,
@@ -84,10 +96,7 @@ export async function parseProblem(imageBase64: string, mediaType: 'image/jpeg' 
     messages: [
       {
         role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
-          { type: 'text', text: 'Read and solve this homework problem.' },
-        ],
+        content,
       },
     ],
     schema: SCHEMA,
