@@ -274,6 +274,32 @@ export function uiLeaks(ui: UISpec | null, ans: HiddenAnswer, ctx: LeakContext):
     case 'Callout':
       texts.push(ui.text);
       break;
+    case 'Picture':
+      for (const it of ui.items) {
+        texts.push(it.label ?? '');
+        if (typeof it.count === 'number' && shownNumberLeaks(it.count)) return true;
+      }
+      break;
+    case 'Steps':
+      texts.push(...ui.steps);
+      break;
+    case 'Balance':
+      texts.push(ui.left.label, ui.right.label);
+      break;
+    case 'Money': {
+      const total = ui.coins.reduce((a, c) => a + c.value * c.count, 0);
+      if (shownNumberLeaks(total) || shownNumberLeaks(total / 100)) return true;
+      break;
+    }
+    case 'Shape':
+      texts.push(...ui.sides);
+      break;
+    case 'Tally':
+      for (const r of ui.rows) {
+        texts.push(r.label);
+        if (!r.unknown && shownNumberLeaks(r.count)) return true;
+      }
+      break;
     default:
       break;
   }

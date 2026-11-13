@@ -470,15 +470,34 @@ function EqToken({ tok, i }: { tok: string; i: number }) {
       </Pulse>
     );
   }
+  const frac = tok.match(/^(\d+|\?)\/(\d+|\?)$/);
+  if (frac) {
+    const part = (x: string) =>
+      x === '?' ? (
+        <View style={styles.eqBoxSmall}>
+          <Text style={styles.eqQSmall}>?</Text>
+        </View>
+      ) : (
+        <Text style={styles.eqFracNum}>{x}</Text>
+      );
+    return (
+      <View style={styles.eqFrac}>
+        {part(frac[1])}
+        <View style={styles.eqFracLine} />
+        {part(frac[2])}
+      </View>
+    );
+  }
   const op = /^[+\-×x÷=:*/]$/.test(tok);
-  return <Text style={[styles.eqTok, op && { color: i % 2 ? colors.primary : colors.blue }]}>{tok === '*' ? '×' : tok}</Text>;
+  return <Text style={[styles.eqTok, op && styles.eqOp]}>{tok === '*' ? '×' : tok === '-' ? '−' : tok}</Text>;
 }
 
 export function Equation({ spec }: GenUIProps<EquationSpec>) {
   return (
     <View style={{ gap: 10, alignItems: 'center' }}>
       {spec.lines.map((line, li) => {
-        const toks = line.replace(/([+\-×÷=*/])/g, ' $1 ').split(/\s+/).filter(Boolean);
+        // keep fractions like 3/8 together; split everything else around operators
+        const toks = line.match(/(\d+|\?)\s*\/\s*(\d+|\?)|[+\-×÷=*:]|\?|□|[^\s+\-×÷=*:]+/g)?.map((t) => t.replace(/\s+/g, '')) ?? [];
         return (
           <PopIn key={li} delay={li * 500} style={styles.eqLine}>
             {toks.map((t, i) => (
@@ -516,34 +535,47 @@ export function Compare({ spec }: GenUIProps<CompareSpec>) {
 
 // ------------------------------------------------------------------ Choice
 
-export function Choice({ spec, onEvent }: GenUIProps<ChoiceSpec>) {
+/** Tap-to-answer. Short answers (numbers, fractions) are big tiles in a row; longer ones are a tidy list. */
+export function Choice({ spec, width, onEvent }: GenUIProps<ChoiceSpec>) {
   const [picked, setPicked] = useState<number | null>(null);
+  const short = spec.options.every((o) => o.length <= 5);
+  const choose = (i: number, o: string) => {
+    setPicked(i);
+    onEvent?.({ component: 'Choice', action: 'choose', data: { option: o } });
+  };
   return (
-    <View style={{ gap: 10 }}>
+    <View style={{ width, gap: 12 }}>
       <Text style={styles.choiceQ}>{spec.question}</Text>
-      <View style={styles.choiceGrid}>
-        {spec.options.map((o, i) => (
-          <PopIn key={i} delay={i * 120} style={{ width: '47%', flexGrow: 1 }}>
-            <Pressable
-              onPress={() => {
-                setPicked(i);
-                onEvent?.({ component: 'Choice', action: 'choose', data: { option: o } });
-              }}
-            >
-              {({ pressed }) => (
-                <View
-                  style={[
-                    styles.choice,
-                    picked === i && { backgroundColor: colors.blueLight, borderColor: colors.blueBorder },
-                    { borderBottomWidth: pressed ? 2 : 5, marginTop: pressed ? 3 : 0 },
-                  ]}
-                >
-                  <Text style={[styles.choiceText, picked === i && { color: colors.blueDark }]}>{o}</Text>
-                </View>
-              )}
-            </Pressable>
-          </PopIn>
-        ))}
+      <View style={short ? styles.tileRow : styles.list}>
+        {spec.options.map((o, i) => {
+          const on = picked === i;
+          return (
+            <PopIn key={i} delay={i * 90} style={short ? { flex: 1 } : undefined}>
+              <Pressable onPress={() => choose(i, o)} accessibilityRole="button">
+                {({ pressed }) => (
+                  <View
+                    style={[
+                      short ? styles.tile : styles.option,
+                      on && styles.optionOn,
+                      { borderBottomWidth: pressed ? 2 : 4, marginTop: pressed ? 2 : 0 },
+                    ]}
+                  >
+                    {short ? (
+                      <Text style={[styles.tileText, on && { color: colors.blueDark }]}>{o}</Text>
+                    ) : (
+                      <>
+                        <View style={[styles.letter, on && { backgroundColor: colors.blue, borderColor: colors.blue }]}>
+                          <Text style={[styles.letterText, on && { color: '#fff' }]}>{String.fromCharCode(65 + i)}</Text>
+                        </View>
+                        <Text style={[styles.optionText, on && { color: colors.blueDark }]}>{o}</Text>
+                      </>
+                    )}
+                  </View>
+                )}
+              </Pressable>
+            </PopIn>
+          );
+        })}
       </View>
     </View>
   );
@@ -687,6 +719,12 @@ const styles = StyleSheet.create({
 
   eqLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
   eqTok: { fontFamily: ff.display, fontSize: 32, color: colors.ink },
+  eqOp: { color: colors.inkSoft },
+  eqFrac: { alignItems: 'center', paddingHorizontal: 2 },
+  eqFracNum: { fontFamily: ff.display, fontSize: 26, color: colors.ink, lineHeight: 30 },
+  eqFracLine: { width: 30, height: 3, borderRadius: 2, backgroundColor: colors.ink, marginVertical: 2 },
+  eqBoxSmall: { width: 34, height: 30, borderRadius: 8, borderWidth: 2.5, borderStyle: 'dashed', borderColor: colors.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF1EA' },
+  eqQSmall: { fontFamily: ff.display, fontSize: 18, color: colors.primary },
   eqBox: { width: 52, height: 48, borderRadius: 10, borderWidth: 3, borderStyle: 'dashed', borderColor: colors.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF1EA' },
   eqQ: { fontFamily: ff.display, fontSize: 26, color: colors.primary },
 
@@ -697,10 +735,26 @@ const styles = StyleSheet.create({
   cmpQ: { fontFamily: ff.black, fontSize: 12, color: colors.trackText },
   cmpQBig: { fontFamily: ff.display, fontSize: 36, color: colors.ink },
 
-  choiceQ: { fontFamily: ff.black, fontSize: 17, color: colors.ink, textAlign: 'center' },
-  choiceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  choice: { borderWidth: 2, borderColor: colors.line, borderRadius: 16, paddingVertical: 16, alignItems: 'center', backgroundColor: '#fff' },
-  choiceText: { fontFamily: ff.display, fontSize: 22, color: colors.ink },
+  choiceQ: { fontFamily: ff.black, fontSize: 16, color: colors.ink },
+  list: { gap: 8 },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 2,
+    borderColor: colors.line,
+    borderRadius: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+  },
+  optionOn: { backgroundColor: colors.blueLight, borderColor: colors.blueBorder },
+  letter: { width: 30, height: 30, borderRadius: 9, borderWidth: 2, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
+  letterText: { fontFamily: ff.black, fontSize: 14, color: colors.inkSoft },
+  optionText: { flex: 1, fontFamily: ff.bold, fontSize: 16, color: colors.ink, lineHeight: 21 },
+  tileRow: { flexDirection: 'row', gap: 10 },
+  tile: { borderWidth: 2, borderColor: colors.line, borderRadius: 16, paddingVertical: 14, alignItems: 'center', backgroundColor: '#fff' },
+  tileText: { fontFamily: ff.display, fontSize: 24, color: colors.ink },
 
   sliderVal: { fontFamily: ff.display, fontSize: 36, color: colors.primary },
   sliderTrack: { position: 'absolute', left: 0, right: 0, height: 12, borderRadius: 6, backgroundColor: colors.track },

@@ -129,16 +129,71 @@ export interface CalloutSpec {
   tone?: 'idea' | 'tip' | 'wow' | 'remember';
 }
 
-export type BlockSpec =
+export interface PictureSpec {
+  type: 'Picture';
+  caption?: string;
+  items: { emoji: string; label?: string; count?: number }[]; // a little illustrated scene, e.g. 👧 + 🎂 + 👫
+}
+export interface StepsSpec {
+  type: 'Steps';
+  caption?: string;
+  steps: string[];   // the method, in order (2-5 short steps)
+  current?: number;  // 0-based step the child is on (highlighted)
+}
+export interface BalanceSpec {
+  type: 'Balance';
+  caption?: string;
+  left: { label: string; emoji?: string };
+  right: { label: string; emoji?: string };
+  tilt: 'left' | 'right' | 'even' | 'unknown'; // which side is heavier; "unknown" = the question
+}
+export interface MoneySpec {
+  type: 'Money';
+  caption?: string;
+  currency: '€' | '$' | '£';
+  coins: { value: number; count: number }[]; // value in cents/pence (e.g. 50) or whole units for notes (>=500)
+}
+export interface ShapeSpec {
+  type: 'Shape';
+  caption?: string;
+  shape: 'square' | 'rectangle' | 'triangle';
+  sides: string[];  // labels per side, e.g. ["5 cm","3 cm","?","3 cm"]
+  grid?: boolean;   // draw unit squares inside (area)
+  cols?: number;    // grid columns (rectangle/square)
+  rows?: number;    // grid rows
+}
+export interface TallySpec {
+  type: 'Tally';
+  caption?: string;
+  rows: { label: string; emoji?: string; count: number; unknown?: boolean }[];
+}
+
+/** Optional emphasis Claude can put on any block. */
+export interface BlockStyle {
+  focus?: boolean; // ring + gentle pulse: "look here"
+}
+
+export type BlockSpec = (
   | FractionBarsSpec | NumberLineSpec | BarModelSpec | UnitLadderSpec
   | FractionPieSpec | CountersSpec | ArrayGridSpec | BarChartSpec | PlaceValueSpec
-  | RulerSpec | ClockSpec | EquationSpec | CompareSpec | ChoiceSpec | SliderSpec | CalloutSpec;
+  | RulerSpec | ClockSpec | EquationSpec | CompareSpec | ChoiceSpec | SliderSpec | CalloutSpec
+  | PictureSpec | StepsSpec | BalanceSpec | MoneySpec | ShapeSpec | TallySpec
+) & BlockStyle;
+
+export type SceneTheme = 'orange' | 'blue' | 'green' | 'purple' | 'yellow' | 'pink';
 
 /** A short animated explanation: steps appear one at a time, each with 1-2 blocks and a spoken line. */
+export interface SceneStep {
+  say?: string;               // **words** in double stars are highlighted in the theme colour
+  blocks: BlockSpec[];
+  layout?: 'stack' | 'row';   // row = two blocks side by side (for comparing)
+}
 export interface SceneSpec {
   type: 'Scene';
   title?: string;
-  steps: { say?: string; blocks: BlockSpec[] }[]; // 1-5 steps
+  theme?: SceneTheme;         // accent colour that fits the story (pizza -> orange, sea -> blue …)
+  art?: string;               // 1-3 emoji shown as the scene's header illustration
+  steps: SceneStep[];         // 1-3 steps
 }
 
 export type UISpec = BlockSpec | SceneSpec;
