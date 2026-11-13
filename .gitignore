@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/
+server/data/
+dist/
+.expo/
+web-build/
+TODO-*.md
+*.log
