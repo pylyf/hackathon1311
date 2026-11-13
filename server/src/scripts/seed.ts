@@ -1,14 +1,18 @@
 // npm run seed — plausible demo history so the "What Nudge learned" panel looks alive.
-// Overwrites data/bandit.json, data/memory.json, data/events.jsonl (sessions.json is cleared).
+// Overwrites bandit, memory, events, curriculum and the agent's brain (skills, recipes, change log);
+// sessions.json is cleared. The child's profile is kept if onboarding was done, else a demo child is written,
+// so the profile, the memory notes and the agent's skills always describe the SAME child.
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import type { HintStyle, MemoryNote, Topic } from '../contract.js';
+import type { BrainChange, ChildProfile, HintStyle, MemoryNote, Recipe, Skill, Topic } from '../contract.js';
 import { defaultBandit, saveBandit } from '../bandit.js';
 import { saveMemory } from '../memory.js';
 import { ensureDataDir, FILES, writeJson, type NudgeEvent } from '../store.js';
 import { saveCurriculum } from '../curriculum.js';
 import { mockCurriculum } from '../mockCurriculum.js';
 import { verifyAnswer } from '../problem.js';
+import { loadProfile } from '../profile.js';
+import { validateScene } from '../uispec.js';
 
 ensureDataDir();
 
@@ -22,10 +26,17 @@ const day = 24 * 3600 * 1000;
 const iso = (t: number) => new Date(t).toISOString();
 const now = Date.now();
 
+// One consistent demo child: keep the onboarding profile if there is one.
+const DEMO_CHILD: ChildProfile = { name: 'Ema', grade: 3, interests: ['Football'], mathFeeling: 'tricky', dailyGoal: 3 };
+const profile = loadProfile() ?? DEMO_CHILD;
+writeJson(FILES.profile, profile);
+const interestList = profile.interests.length ? profile.interests : DEMO_CHILD.interests;
+const hobby = interestList[0].toLowerCase();
+
 const memory: MemoryNote[] = [
   { id: randomUUID(), topic: 'fractions', kind: 'misconception', text: 'Adds denominators (1/4 + 1/4 = 2/8).', seen: 3, updatedAt: iso(now - 1 * day) },
   { id: randomUUID(), topic: 'fractions', kind: 'works', text: 'Fraction bars help: gets it after shading pieces.', seen: 2, updatedAt: iso(now - 1 * day) },
-  { id: randomUUID(), topic: 'any', kind: 'interest', text: 'Loves football — use it in story hints.', seen: 2, updatedAt: iso(now - 2 * day) },
+  ...interestList.map((i): MemoryNote => ({ id: randomUUID(), topic: 'any', kind: 'interest', text: `Loves ${i.toLowerCase()} — use it in story hints.`, seen: 2, updatedAt: iso(now - 2 * day) })),
   { id: randomUUID(), topic: 'word-problems', kind: 'doesnt-work', text: 'Long verbal explanations lose attention; keep it short.', seen: 1, updatedAt: iso(now - 3 * day) },
 ];
 saveMemory(memory);
@@ -99,5 +110,50 @@ cur.warmup = {
 };
 saveCurriculum(cur);
 
+// The agent's brain: what it taught itself in those past sessions (skills, a visual recipe, the change log).
+const skills: Skill[] = [
+  {
+    id: 'adding-fractions-same-bottom', title: 'Adding fractions with the same bottom number', topic: 'fractions',
+    whenToUse: 'Any add/subtract problem where the denominators match',
+    body: `- Show the pieces first (pie or bar), numbers second
+- Say "the slices stay the same size" before any adding
+- If ${profile.name} adds the bottoms too, go straight back to the picture and count coloured pieces
+- Ask for the top number only, one tiny question at a time`,
+    version: 2, updatedAt: iso(now - 1 * day),
+  },
+  {
+    id: 'keeping-attention', title: `Keeping ${profile.name} engaged`, topic: 'any',
+    whenToUse: `When answers get short, off-topic or "I don't know"`,
+    body: `- Keep every turn under two short sentences
+- Switch to something to tap instead of explaining again
+- A ${hobby} story works better than a plain rule
+- Celebrate each correct step out loud`,
+    version: 1, updatedAt: iso(now - 2 * day),
+  },
+];
+writeJson(FILES.skills, skills);
+
+const pizza = validateScene({
+  type: 'Scene', title: 'Pizza slices: add same-size pieces',
+  steps: [
+    { say: 'Here is a pizza cut into equal slices.', blocks: [{ type: 'FractionPie', pies: [{ parts: 4, shaded: 1, label: 'first' }], interactive: false }] },
+    { say: 'Some more slices of the same size arrive.', blocks: [{ type: 'FractionPie', pies: [{ parts: 4, shaded: 1, label: 'first' }, { parts: 4, shaded: 1, label: 'more' }], interactive: false }] },
+    { say: 'The slices did not change size. Only count them!', blocks: [{ type: 'Callout', emoji: '💡', text: 'Same slices: the bottom number stays.', tone: 'remember' }] },
+  ],
+});
+const recipes: Recipe[] = pizza
+  ? [{ id: randomUUID(), title: pizza.title ?? 'Pizza slices', topic: 'fractions', whenToUse: 'Adding fractions with the same denominator', scene: pizza, uses: 3, updatedAt: iso(now - 1 * day) }]
+  : [];
+writeJson(FILES.recipes, recipes);
+
+const changes: BrainChange[] = [
+  { ts: iso(now - 3 * day), kind: 'skill-created', title: skills[0].title, why: 'Two verbal hints failed; the answer came right after a picture of the pieces.' },
+  { ts: iso(now - 2 * day), kind: 'skill-created', title: skills[1].title, why: `Long explanations lost attention; a ${hobby} story got an answer straight away.` },
+  { ts: iso(now - 2 * day), kind: 'recipe-created', title: recipes[0]?.title ?? 'Pizza slices', why: 'The pie picture fixed the adds-denominators mistake.' },
+  { ts: iso(now - 1 * day), kind: 'skill-updated', title: `${skills[0].title} → v2`, why: 'Same mistake came back once; added "go back to the picture and count".' },
+];
+fs.writeFileSync(FILES.brainLog, changes.map((c) => JSON.stringify(c) + '\n').join(''));
+
+console.log(`Seeded child "${profile.name}" (${interestList.join(', ')}), ${skills.length} skills, ${recipes.length} recipe, ${changes.length} brain changes.`);
 console.log(`Seeded curriculum "${cur.title}" (${cur.lessons.length} lessons, next ${cur.nextLessonId}, warm-up ${cur.warmup.problem.text}).`);
 console.log(`Seeded ${past.length} sessions, ${events.length} events, ${memory.length} memory notes, bandit favouring visual for fractions.`);

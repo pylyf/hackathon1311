@@ -90,7 +90,7 @@ If several problems are visible, take the first unsolved one. If the photo has n
 Fields:
 - topic: "fractions" if the problem is about fractions, "units" if it is about measurement/unit conversion, otherwise "word-problems".
 - answerValue / answerExpression: solve carefully; the expression must evaluate to answerValue in mathjs.
-- introText: what the tutor says out loud first, to the child: 2-3 short, warm, simple sentences that retell the story in kid-friendly words and say what we need to find, then ONE easy opening question about the story (e.g. what do we know / what happens first). It is spoken by text-to-speech: no markdown, no emojis, write fractions in words ("three quarters"). It MUST NOT contain the answer or any hint that gives it away.
+- introText: what the tutor says out loud first, to the child. The child can already read the problem on screen, so do NOT retell it: ONE short warm sentence naming what we need to find, then ONE easy opening question about the story (e.g. what do we know / what happens first). At most 30 words in total. It is spoken by text-to-speech: no markdown, no emojis, write fractions in words ("three quarters"). It MUST NOT contain the answer or any hint that gives it away.
 - starterVisualJson: a helpful starting visual for this problem that shows the GIVEN situation, never the result (e.g. for 3/4 - 1/4 show a bar with 3 of 4 parts shaded, not the result). Return "" if no component fits.
 ${UI_SPEC_DOC}
 ${profileLine() ? `\nAbout the child: ${profileLine()}` : ''}

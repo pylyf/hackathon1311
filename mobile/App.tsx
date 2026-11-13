@@ -129,6 +129,19 @@ export default function App() {
     go({ name: 'learned', newNotes: notes, changes, plan });
   };
 
+  /** Leaving a problem with the back arrow: no "finish" screen, but the session is still closed in the
+   *  background so the agent reflects, re-plans and improves from it. */
+  const leaveTalk = () => {
+    const id = sessionId;
+    go({ name: 'home' });
+    if (!id) return;
+    setSessionId(null);
+    api
+      .endSession(id)
+      .catch(() => {})
+      .finally(loadCurriculum); // the next problem opens a fresh session lazily (ensureSession)
+  };
+
   const startWarmup = async () => {
     const w = curriculum?.warmup;
     if (!w) return;
@@ -188,7 +201,7 @@ export default function App() {
           key={route.problem.problemId}
           sessionId={sessionId ?? ''}
           problem={route.problem}
-          onBack={() => go({ name: 'home' })}
+          onBack={leaveTalk}
           onSolved={solved}
           onNext={() => go({ name: 'pick' })}
           onNextProblem={(problem) => go({ name: 'talk', problem })}

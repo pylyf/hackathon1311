@@ -70,6 +70,9 @@ export default function TalkScreen({
   const pendingEvent = useRef<UIEvent | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<ScrollViewInstance>(null);
+  // y of the visual + tutor bubble block: after each reply we scroll there, so the picture is what the child sees first
+  const answerY = useRef(0);
+  const toAnswer = () => scrollRef.current?.scrollTo({ y: Math.max(0, answerY.current - 8), animated: true });
 
   const [replyCount, setReplyCount] = useState(0);
   const applyReply = useCallback((r: TutorReply) => {
@@ -124,7 +127,7 @@ export default function TalkScreen({
         if (res.transcript && !extra.uiEvent) setTranscript(res.transcript);
         applyReply(res.reply);
         if (res.solved) setSolved(true);
-        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
+        setTimeout(toAnswer, 120);
       } catch (e) {
         setError(errMsg(e));
       } finally {
@@ -177,7 +180,7 @@ export default function TalkScreen({
     if (!prepared) return;
     poke();
     setUi(prepared);
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+    setTimeout(toAnswer, 150);
   };
 
   // ---- Voice: tap to start, tap to stop ----
@@ -303,30 +306,31 @@ export default function TalkScreen({
           <Text style={styles.problemText}>{problem.text}</Text>
         </View>
 
-        <TracePanel steps={reply.trace} runId={replyCount} />
+        {/* Visual first, then what Nudge says: the picture must be visible without scrolling. */}
+        <View style={styles.answer} onLayout={(e) => (answerY.current = e.nativeEvent.layout.y)}>
+          {ui && <GenUIRenderer spec={ui} onEvent={onUIEvent} onSay={sayStep} />}
 
-        {transcript && (
-          <View style={styles.kidBubble}>
-            <Text style={styles.kidLabel}>YOU SAID</Text>
-            <Text style={styles.kidText}>“{transcript}”</Text>
+          {transcript && (
+            <View style={styles.kidBubble}>
+              <Text style={styles.kidLabel}>YOU SAID</Text>
+              <Text style={styles.kidText}>“{transcript}”</Text>
+            </View>
+          )}
+
+          <View style={styles.tutorRow}>
+            <Bounce distance={busy ? 5 : 2}>
+              <Mascot mood={mood} size={76} />
+            </Bounce>
+            <SpeechBubble style={{ flex: 1 }}>
+              {busy ? <ThinkingDots /> : <WordReveal key={reply.text} text={reply.text} />}
+              {!busy && (
+                <Pressable onPress={() => speakReply(reply.text, reply.audioBase64)} hitSlop={8} style={styles.replayBtn}>
+                  <Text style={styles.replay}>🔊 SAY IT AGAIN</Text>
+                </Pressable>
+              )}
+            </SpeechBubble>
           </View>
-        )}
-
-        <View style={styles.tutorRow}>
-          <Bounce distance={busy ? 5 : 2}>
-            <Mascot mood={mood} size={76} />
-          </Bounce>
-          <SpeechBubble style={{ flex: 1 }}>
-            {busy ? <ThinkingDots /> : <WordReveal key={reply.text} text={reply.text} />}
-            {!busy && (
-              <Pressable onPress={() => speakReply(reply.text, reply.audioBase64)} hitSlop={8} style={styles.replayBtn}>
-                <Text style={styles.replay}>🔊 SAY IT AGAIN</Text>
-              </Pressable>
-            )}
-          </SpeechBubble>
         </View>
-
-        {ui && <GenUIRenderer spec={ui} onEvent={onUIEvent} onSay={sayStep} />}
 
         {prepared && ui !== prepared && !solved && (
           <Pop>
@@ -346,6 +350,9 @@ export default function TalkScreen({
             </Pressable>
           </Pop>
         )}
+
+        {/* How the agent got there: for curious kids, parents and the demo. Below the lesson, never above it. */}
+        <TracePanel steps={reply.trace} runId={replyCount} />
 
         {error && <ErrorBox message={error} onRetry={lastReq.current ? () => sendTurn(lastReq.current!) : undefined} />}
       </ScrollView>
@@ -435,9 +442,6 @@ export default function TalkScreen({
             />
             <BigButton small label="Send" onPress={sendText} disabled={busy || !text.trim()} color={colors.blue} />
           </View>
-          <Pressable onPress={finish} disabled={finishing} hitSlop={8} style={{ alignSelf: 'center' }}>
-            <Text style={styles.finishLink}>{finishing ? 'Saving…' : 'Finish for today'}</Text>
-          </Pressable>
         </BottomBar>
       )}
     </View>
@@ -523,6 +527,7 @@ const styles = StyleSheet.create({
   nudge: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.yellowLight, borderRadius: 14, padding: 6, borderWidth: 2, borderColor: '#FFE08A' },
   nudgeText: { flex: 1, fontFamily: ff.black, fontSize: 14, color: colors.ink },
   scroll: { padding: 16, gap: 16, paddingBottom: 24 },
+  answer: { gap: 14 },
   problem: {
     backgroundColor: colors.yellowLight,
     borderWidth: 2,
@@ -568,7 +573,6 @@ const styles = StyleSheet.create({
     fontFamily: ff.regular,
     color: colors.ink,
   },
-  finishLink: { color: colors.trackText, fontSize: 13, fontFamily: ff.black, letterSpacing: 0.6, textTransform: 'uppercase' },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   pot: { borderWidth: 2, borderColor: colors.line, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   potText: { fontFamily: ff.black, fontSize: 13, color: colors.otter },

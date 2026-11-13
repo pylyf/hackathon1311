@@ -54,6 +54,7 @@ export default function HomeScreen({
   }, []);
   useEffect(load, [load]);
 
+  const [more, setMore] = useState(false);
   const [warmBusy, setWarmBusy] = useState(false);
   const [warmError, setWarmError] = useState<string | null>(null);
   const lesson = nextLesson(curriculum);
@@ -102,7 +103,7 @@ export default function HomeScreen({
             </BubbleText>
           </SpeechBubble>
           <Bounce distance={8}>
-            <Mascot mood="hello" size={190} />
+            <Mascot mood="hello" size={150} />
           </Bounce>
         </View>
 
@@ -214,16 +215,24 @@ export default function HomeScreen({
           <Icon name="chevron-right" size={24} color={colors.trackText} />
         </Pressable>
 
-        <View style={styles.links}>
-          <Pressable onPress={onDemo} hitSlop={10}>
-            <Text style={styles.link}>All visuals</Text>
-          </Pressable>
-          <Text style={styles.dot}>·</Text>
-          <Pressable onPress={onRedoIntro} hitSlop={10}>
-            <Text style={styles.link}>Redo intro</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.server}>{API_URL}</Text>
+        {/* Grown-up / demo tools stay out of the child's way until asked for. */}
+        <Pressable onPress={() => setMore((m) => !m)} hitSlop={10} style={{ alignSelf: 'center' }} accessibilityRole="button">
+          <Text style={styles.link}>{more ? 'Less ▲' : 'More ▼'}</Text>
+        </Pressable>
+        {more && (
+          <>
+            <View style={styles.links}>
+              <Pressable onPress={onDemo} hitSlop={10}>
+                <Text style={styles.link}>All visuals</Text>
+              </Pressable>
+              <Text style={styles.dot}>·</Text>
+              <Pressable onPress={onRedoIntro} hitSlop={10}>
+                <Text style={styles.link}>Redo intro</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.server}>{API_URL}</Text>
+          </>
+        )}
       </ScrollView>
     </View>
   );

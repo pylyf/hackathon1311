@@ -1,4 +1,4 @@
-// npm run reset — wipe local learning state (bandit, memory, events, sessions, curriculum) in server/data/.
+// npm run reset — wipe local learning state (bandit, memory, events, sessions, curriculum, profile, the agent's skills/recipes/change log) in server/data/.
 import fs from 'node:fs';
 import { FILES } from '../store.js';
 

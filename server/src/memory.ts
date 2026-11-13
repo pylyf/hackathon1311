@@ -34,6 +34,9 @@ export interface NoteUpdate {
   text: string;
 }
 
+/** One clean sentence: collapses whitespace and drops stray JSON punctuation the model sometimes leaves at the end. */
+const tidy = (s: string) => s.replace(/\s+/g, ' ').trim().replace(/[\]\[{}"'`,]+$/g, '').trim();
+
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9/ ]/g, '').replace(/\s+/g, ' ').trim();
 
 /** Merge updates into memory.json: known id or same text => seen+1, otherwise add. Returns touched notes. */
@@ -41,20 +44,21 @@ export function mergeNotes(updates: NoteUpdate[]): MemoryNote[] {
   const notes = loadMemory();
   const touched = new Map<string, MemoryNote>();
   const now = new Date().toISOString();
-  for (const u of updates) {
-    if (!u.text?.trim()) continue;
+  for (const raw of updates) {
+    const u = { ...raw, text: tidy(raw.text ?? '') };
+    if (!u.text) continue;
     let existing =
       (u.id ? notes.find((n) => n.id === u.id) : undefined) ??
       notes.find((n) => n.topic === u.topic && n.kind === u.kind && norm(n.text) === norm(u.text));
     if (existing) {
       if (touched.has(existing.id)) continue; // count each note once per reflection
       existing.seen += 1;
-      existing.text = u.text.trim();
+      existing.text = u.text;
       existing.kind = u.kind;
       existing.topic = u.topic;
       existing.updatedAt = now;
     } else {
-      existing = { id: randomUUID(), topic: u.topic, kind: u.kind, text: u.text.trim(), seen: 1, updatedAt: now };
+      existing = { id: randomUUID(), topic: u.topic, kind: u.kind, text: u.text, seen: 1, updatedAt: now };
       notes.push(existing);
     }
     touched.set(existing.id, existing);

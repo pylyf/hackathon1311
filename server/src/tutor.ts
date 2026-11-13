@@ -476,7 +476,7 @@ export async function lessonIntro(p: ProblemState, warmupMessage?: string): Prom
   if (MOCK) mockAgent(ctx, 'ambiguous', warmupMessage);
   else {
     try {
-      await runAgent(ctx, (warmupMessage ? `This is the WARM-UP the planner prepared after last session. Start with this message (you may rephrase it): "${warmupMessage}" Then ` : 'This is a NEW practice problem from the lesson. ') + 'Introduce it: in one short sentence connect it to what we learned in the lesson (the textbook method, without solving), retell the problem simply, and ask ONE easy L1 opening question. Call get_strategy_advice (child_outcome "other") and recall_memory first; show the starting situation with show_component if the style is visual.');
+      await runAgent(ctx, (warmupMessage ? `This is the WARM-UP the planner prepared after last session. Start with this message (you may rephrase it): "${warmupMessage}" Then ` : 'This is a NEW practice problem from the lesson. ') + 'Introduce it in at most 30 words: one short sentence connecting it to what we learned in the lesson (the textbook method, without solving), then ONE easy L1 opening question. Do NOT retell the problem, the child can read it on screen. Call get_strategy_advice (child_outcome "other") and recall_memory first; show the starting situation with show_component if the style is visual.');
     } catch (e) {
       console.warn('[tutor] lesson intro agent failed:', (e as Error).message);
     }
