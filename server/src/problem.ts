@@ -34,7 +34,10 @@ export function evalExpression(expression: string): number | null {
 /** mathjs check of a model's answer. Prefers the computed value when the model's arithmetic disagrees. */
 export function verifyAnswer(expression: string, modelValue: number): { value: number; verified: boolean; computed: number | null } {
   const computed = evalExpression(expression);
-  const verified = computed !== null && approxEq(computed, modelValue);
+  // The model often reports fractions as rounded decimals (2/3 → 0.6667). Accept rounding
+  // differences up to 4 decimal places; the exact computed value is what we keep.
+  const verified = computed !== null
+    && (approxEq(computed, modelValue) || Math.abs(computed - modelValue) <= 5e-4 * Math.max(1, Math.abs(computed)));
   return { value: computed ?? modelValue, verified, computed };
 }
 
