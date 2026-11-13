@@ -1,173 +1,306 @@
-# Nudge — the homework buddy that never gives the answer
+<div align="center">
 
-A voice-first, **agentic**, self-improving math tutor for primary-school kids.
+<img src="mobile/assets/otter/hello.gif" width="150" alt="Nudge the otter waving" />
 
-A parent or teacher uploads the **textbook chapter** the class is working on. An agent turns it
-into a mini-curriculum: short written lessons and verified practice problems, taught **the same
-way the textbook does**. The child practices with a **voice tutor** that guides with hints and
-interactive visuals — never the answer — and after every session a planner agent **re-plans**
-what comes next. Kids can also just **snap a photo** of any homework problem.
+# Nudge
 
-Scope: primary maths (word problems, fractions, units). Language: English. Built in a few hours.
+**The homework buddy that never gives the answer, and gets better at teaching your kid every session.**
 
-**Why not NotebookLM / ChatGPT?** Those summarize and answer. Nudge is for kids: it talks,
-it refuses to give the answer, it follows the class textbook's method, and it adapts to one
-specific child over time.
+A voice-first, self-improving AI math tutor for primary-school kids (6–10).<br/>
+It reads the homework, refuses to just solve it, draws exactly the picture the child needs,<br/>
+and after every session rewrites its own teaching playbook for that one child.
 
-## What it does
+![Claude](https://img.shields.io/badge/Claude-Sonnet%205.5-D97757?style=flat-square)
+![ElevenLabs](https://img.shields.io/badge/ElevenLabs-voice-000000?style=flat-square)
+![Qdrant](https://img.shields.io/badge/Qdrant-long--term%20memory-DC244C?style=flat-square)
+![Expo](https://img.shields.io/badge/Expo-React%20Native-000020?style=flat-square)
+![TypeScript](https://img.shields.io/badge/TypeScript-everywhere-3178C6?style=flat-square)
 
-1. **Textbook → curriculum (agent):** reads the PDF/photo → plans 3–5 lessons → writes kid-friendly
-   lessons + worked examples → generates practice problems → **verifies every answer with `mathjs`**.
-   Progress is streamed live as an agent trace.
-2. **Written lessons:** explanation, worked example, a visual, "from your textbook p. X".
-3. **Voice tutor (agent loop):** push-to-talk → ElevenLabs STT → Claude tool loop → ElevenLabs TTS.
-   Hints L1–L5, GenUI visuals, grounded in the lesson's method.
-4. **Photo homework:** snap any problem → same tutor.
-5. **Self-improvement:** bandit learns which hint style works; memory notes are written during and
-   after sessions; the planner updates lesson mastery, schedules review and creates a warm-up.
-6. **Visible agency:** a "Nudge is thinking" panel shows every step the agent took.
+</div>
 
-Out of scope: accounts, auth, deploy. One hard-coded child (`demo`).
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="docs/media/home.png" width="240" alt="Home screen" /><br/><sub><b>Snap homework, continue a lesson, or add a textbook chapter</b></sub></td>
+    <td align="center" width="33%"><img src="docs/media/scene.gif" width="260" alt="A generated, animated explanation" /><br/><sub><b>Claude designs an animated, step-by-step explanation</b></sub></td>
+    <td align="center" width="33%"><img src="docs/media/reward.gif" width="240" alt="Reward animation" /><br/><sub><b>The child finds the answer and gets the celebration</b></sub></td>
+  </tr>
+</table>
 
-## Stack
+---
 
-- **App:** Expo (React Native, TypeScript) — Expo Go on a phone or the browser
-- **Server:** Node + Express (TypeScript) on the laptop
-- **Services:** Anthropic API + ElevenLabs — nothing else
-- **Storage:** local JSON files in `server/data/` (source of truth) + a local **Qdrant** vector index for long-term semantic memory (standalone binary, no Docker)
+## The problem
 
-```
-Expo app ──HTTP──► Express server ──► Anthropic: Opus (textbook, photo, planner), Sonnet (tutor loop)
-                                  └─► ElevenLabs (STT, TTS)
-                                  └─► Qdrant (local child process) + all-MiniLM-L6-v2 embeddings (in-process, WASM)
-             server/data: curriculum.json · memory.json · bandit.json · events.jsonl · sessions.json
-```
+> *Kid opens ChatGPT. "What's 3/8 + 2/8?" Gets "5/8". Copies it. Done.*
+> *"Ok, and 3/7 + 2/7?" Kid reaches for the phone again.*
 
-## The agents
+Every AI homework tool optimises for **getting the homework done**. The answer is always one photo away, so the
+worksheet is finished and nothing is learned. Nudge is built the other way round:
 
-| Agent | When | Does | Tools / output |
-|---|---|---|---|
-| **Curriculum builder** | textbook uploaded | read → plan lessons → write lessons → generate + verify problems | `curriculum.json`, live trace |
-| **Tutor** | every child turn | multi-step tool loop, ends by speaking | `recall_memory`, `get_strategy_advice`, `show_component`, `check_answer`, `check_step`, `write_memory`, `speak` |
-| **Reflector** | session end | turns events into memory notes | `memory.json` |
-| **Planner** | session end | lesson mastery/status, next lesson, new warm-up problem | `curriculum.json`, plan + trace |
+- 🔒 **It never gives the answer.** The answer is solved on the server and never sent to the phone. Every reply,
+  every picture and every agent trace passes a leak guard.
+- 🎨 **It shows instead of tells.** Claude composes an animated explanation from 22 visual building blocks,
+  in the app's own style.
+- 🧠 **It improves itself.** After every session the agent rewrites its own teaching skills for *this* child,
+  saves the visuals that worked and remembers mistakes by meaning, across days.
 
-**The agent decides, code guards the edges:** the hidden answer never leaves the server, a
-leak guard checks every reply and visual, problems are only used if `mathjs` verifies them, and
-the bandit's advice can be overridden only with a logged reason.
+---
 
-## How teaching works
+## How a session feels
 
-**Hint ladder** — help escalates when the child is stuck, never reaching the answer:
-
-| Level | Hint |
+| | |
 |---|---|
-| L1 | Question: "What does the story tell us?" |
-| L2 | Concept reminder (in the textbook's words) |
-| L3 | Visual (GenUI: `FractionBars`, `NumberLine`, `BarModel`, `UnitLadder`) |
-| L4 | Simpler twin problem with smaller numbers |
-| L5 | Worked first step |
+| 📸 **Snap** | The child photographs one problem (or picks an example, or continues a textbook lesson). Claude reads it, solves it privately and checks the maths with `mathjs`. |
+| 🦦 **Talk** | The otter retells the story in kid words and asks one small question. Push-to-talk or type; voice in and out via ElevenLabs. |
+| 🪜 **Hints, not answers** | Wrong answer or "I don't know" moves one step up a hint ladder (question → concept → visual → simpler twin → first step). "Just tell me!" gets a kind no and a better hint. |
+| 🎬 **Show me how** | While the intro plays, the agent prepares a 2–3 step animated scene for this exact problem. One tap plays it. |
+| 👀 **Attention** | Words appear as they're spoken, the otter reacts, and if the child drifts off for 20 s it pops up with a nudge. |
+| 🎉 **Reward** | A correct step gets a burst of stars; the solved problem gets the dancing otter and confetti. |
 
-"Just tell me!" → rephrase, never reveal.
+---
 
-## Self-improvement
+## Generative UI: Claude draws the explanation
 
-- **Bandit (per child × topic):** styles `verbal` · `visual` · `story` · `smaller-numbers`, Beta(α, β).
-  The tutor asks for advice, may override with a reason; reward = progress within 2 turns.
-- **Memory:** the tutor writes notes mid-session (`write_memory`); the reflector consolidates them
-  at session end (misconceptions, what works, interests, mastered skills).
-- **Planner:** marks lessons mastered / review, picks the next lesson, and writes a **warm-up
-  problem targeting the biggest misconception** — shown on the home screen next time.
-- **Visible:** "What Nudge learned" (win rates, notes, hints per problem over sessions) and
-  "Plan for next time".
+<img align="right" src="docs/media/visuals.gif" width="250" alt="Some of the 22 visual blocks" />
+
+Claude doesn't pick from a few canned widgets. For every hint it **composes a scene**: a short animated sequence
+of steps, each with one spoken sentence and a visual block. It also makes the design calls:
+
+- **22 blocks:** `FractionPie` `FractionBars` `Counters` (rows of ten, cross-outs) `ArrayGrid` `BarChart`
+  `BarModel` `NumberLine` `PlaceValue` `Ruler` `UnitLadder` `Clock` `Equation` (stacked fractions, `?` box)
+  `Compare` `Choice` `Slider` `Callout` `Picture` `Steps` `Balance` `Money` `Shape` `Tally`
+- **Design choices:** a `theme` colour that fits the story, header `art` emoji, `**highlighted**` key words,
+  `layout: "row"` to put two visuals side by side, and `focus` for a pulsing "look here" ring
+- **One visual language:** Claude decides *what* to show and the app decides *how* it looks, so every scene
+  uses the same colours, rounded font and chunky shapes. No black outlines, nothing off-brand.
+- **Safe:** every scene is validated with `zod` (bad blocks are dropped, not crashed on) and checked by the leak
+  guard: no shaded result, no counted result, no `= 5/8`.
+
+```jsonc
+{ "type": "Scene", "title": "Pizza party", "theme": "orange", "art": "🍕🎉",
+  "steps": [
+    { "say": "Tom and Mia share **one** pizza with 8 slices.", "blocks": [{ "type": "Picture", "items": [ … ] }] },
+    { "say": "Tom eats **3** slices, Mia eats **2**.", "layout": "row",
+      "blocks": [{ "type": "FractionPie", "pies": [{ "parts": 8, "shaded": 3 }] }, { "type": "FractionPie", "pies": [{ "parts": 8, "shaded": 2 }] }] },
+    { "say": "How many **eighths** together?", "blocks": [{ "type": "Equation", "lines": ["3/8 + 2/8 = ?"], "focus": true }] }
+  ] }
+```
+
+<br clear="right"/>
+
+---
+
+## The self-improving agent
+
+<img align="right" src="docs/media/brain.gif" width="250" alt="Nudge's brain: parent dashboard and under the hood" />
+
+The core of Nudge is a tutor that **learns how to teach one specific child** and shows its work.
+
+```mermaid
+flowchart LR
+  T[Tutor turn] -->|events| L[(Event log)]
+  L --> R[Reflector<br/>memory notes]
+  L --> S[Self-improver<br/>rewrites skills<br/>saves visual recipes]
+  L --> P[Planner<br/>next lesson + warm-up]
+  R --> Q[(Qdrant<br/>long-term memory)]
+  S --> K[(skills.md<br/>recipes)]
+  Q -->|similar past struggles| T
+  K -->|loaded into the prompt| T
+  B[Thompson-sampling bandit] -->|hint style advice| T
+  T -->|reward: progress in 2 turns| B
+```
+
+1. **Skills it writes for itself.** After a session the agent reads the log (what it tried, what the child said,
+   what helped) and writes or rewrites short teaching playbooks: *"Start with a picture before numbers. When he
+   says 'I'm stupid', praise the step, not the answer."* They're versioned (v1 → v5) and loaded into the tutor's
+   prompt before every future session.
+2. **Visual recipes.** Scenes that led to progress are saved and reused on similar problems.
+3. **Strategy that learns.** A Thompson-sampling bandit per topic keeps a `Beta(α, β)` belief for each hint style
+   (talking, pictures, stories, smaller numbers). The agent can override it, but only with a logged reason.
+4. **Memory by meaning.** Notes and every past struggle are embedded into a local **Qdrant**. Before each hint the
+   tutor sees the most similar earlier moments and what helped then.
+5. **A plan for tomorrow.** The planner marks lessons for review and writes a warm-up aimed at the mistake that
+   keeps coming back.
+
+**The kid never sees any of this.** It lives behind a **Parents** link, in *Nudge's brain*:
+
+- **👪 Parent view:** hints per problem going down over time (with a marker wherever the agent rewrote itself),
+  every self-upgrade with its reason and a before/after diff, what helps this child, and what it knows about them.
+- **⚙️ Under the hood:** live models and latency, an animated pipeline with live counts, the bandit's belief curves,
+  real agent traces (`recall → strategy → check → speak`), the raw skill files, the event log, and a box to query
+  the long-term memory yourself.
+
+<br clear="right"/>
+
+---
+
+## Never gives the answer
+
+The agent decides, the code guards the edges:
+
+- The **hidden answer stays on the server**. The phone never receives it.
+- A **leak guard** checks every spoken reply, every visual (shaded fractions, counted objects, bar values,
+  number-line marks, coins…) and every trace step: in digits, words, fractions, decimals and with units. On a
+  leak the reply is regenerated, and if it leaks again a safe fallback question is used.
+- Answers are **verified with `mathjs`** before a problem is used.
+- Parent-facing traces pass the same guard.
+
+---
 
 ## Long-term memory (Qdrant)
 
 Keyword recall only finds a note when the words match. The vector memory finds it by **meaning**, across days:
-today's "two eighths" is matched to last week's "I added the tops and the bottoms" and to the note
-"Adds denominators", even with no word in common.
+today's *"he added the bottom numbers"* matches the note *"Adds denominators"* with no word in common.
 
 | Collection | One point per | Used for |
 |---|---|---|
-| `nudge_notes` | memory note (`memory.json`) | `recall_memory` by meaning; `write_memory` confirms an existing note instead of adding a near-duplicate |
-| `nudge_attempts` | moment the child struggled (`events.jsonl`: wrong / "I don't know" / "just tell me"): lesson skill + problem + what the child said, with how long the answer took and whether the next hint helped | see below |
+| `nudge_notes` | memory note | `recall_memory` by meaning; `write_memory` confirms an existing note instead of adding a near-duplicate |
+| `nudge_attempts` | moment the child struggled (problem, lesson skill, what they said, how long, whether the next hint helped) | similar past struggles before every hint, picking the next practice problem, the planner's "keeps coming back" signal |
 
-Where it changes behaviour:
+- **No Docker, no embedding API.** On first start the server downloads the official Qdrant binary (pinned,
+  sha256-verified) and `all-MiniLM-L6-v2`, runs Qdrant on `127.0.0.1` and embeds in-process with WebAssembly.
+  Text never leaves the laptop.
+- **Never in the way.** Live tutor turns wait at most 400 ms for memory. If Qdrant is missing or slow, everything
+  falls back to keyword recall. The JSON files stay the source of truth, and the index re-syncs on every start.
+- `npm run vector:setup` fetches everything ahead of time (bad wifi at the venue). `MEMORY_BACKEND=json` turns it
+  off, and `QDRANT_URL` (+ `QDRANT_API_KEY`) points at an existing Qdrant instead.
 
-- **Hints (every turn):** before the tutor thinks, the most similar past struggles are fetched (local embedding +
-  Qdrant, tens of milliseconds, hard 400 ms timeout) and handed to it with what happened next: *"2 days ago, similar problem,
-  said 'three twelfths'. Next hint: visual L2 → HELPED."* The tutor prefers what helped and may override the bandit.
-- **Next question:** `POST /lesson/problem` no longer takes the first unsolved problem, but the unsolved one closest
-  to what was hard before (recent and unresolved struggles weigh more; harder problems need a stronger match).
-- **Next day:** the planner searches all earlier sessions for today's mistakes, so the warm-up and "review" target
-  what keeps coming back (plus slow answers), not a one-off slip.
+---
 
-All of it shows up in the "Nudge is thinking" trace ("Long-term memory: a similar moment went wrong 2 days ago → visual hint helped").
+## Textbook mode
 
-How it runs: on first start the server downloads the official Qdrant binary for the machine (macOS Intel/Apple
-Silicon, Linux x64/arm64, Windows x64; pinned version, sha256-verified) and the embedding model (23 MB) into
-`server/.vector/`, starts Qdrant as a child process on `127.0.0.1:6333` (storage in `server/data/qdrant/`) and
-stops it when the server stops. Embeddings are computed in-process with WebAssembly: no Python, no embedding API,
-texts never leave the laptop. `npm run vector:setup` fetches both ahead of time (bad wifi at the venue).
+A parent or teacher uploads the chapter the class is working on (PDF or photo). An agent turns it into 3–5 short
+lessons with worked examples and verified practice problems, **taught the same way the textbook does**. The tutor
+grounds its hints in that method, the next practice problem is the one closest to past struggles, and after each
+session the planner re-plans what comes next.
 
-The JSON files stay the source of truth. The index is re-synced from them on every start and can be deleted at
-any time; if Qdrant is missing, still starting or slow, everything falls back to the old keyword recall.
-`MEMORY_BACKEND=json` turns it off, `QDRANT_URL` (+ `QDRANT_API_KEY`) points at an existing Qdrant instead.
+---
 
-## API
+## Architecture
 
-| Endpoint | Does |
-|---|---|
-| `POST /textbook` → `GET /textbook/job/:id` | start curriculum build, poll live trace |
-| `GET /curriculum` | lessons, statuses, next lesson, warm-up |
-| `POST /lesson/problem` | start a practice / warm-up problem |
-| `POST /problem` | photo → problem (answer kept server-side) |
-| `POST /session/start` · `POST /turn` | tutor turn (audio, text or UI event) → reply + trace |
-| `POST /session/end` | reflection + planner → notes + plan |
-| `GET /learned` | bandit stats, memory, progress |
-| `GET /vector/status` | vector memory state, point counts |
-| `GET /vector/search?q=&problem=&topic=` | what long-term memory recalls for a moment (notes + similar past struggles, with scores) |
-| `POST /vector/reindex` | rebuild the index from the JSON files |
+```mermaid
+flowchart LR
+  subgraph Phone["📱 Expo app (iOS · Android · web)"]
+    UI[Screens + GenUI renderer<br/>22 blocks · scenes · animations]
+  end
+  subgraph Laptop["💻 Express server (TypeScript)"]
+    SOLVE[Solver<br/>photo → problem + hidden answer]
+    TUTOR[Tutor agent<br/>tool loop]
+    GUARD[Leak guard]
+    BRAIN[Self-improver · Reflector · Planner]
+    BANDIT[Bandit]
+    VEC[(Qdrant + MiniLM)]
+    DATA[(JSON: memory · skills · recipes<br/>curriculum · events)]
+  end
+  UI <-->|HTTP| SOLVE
+  UI <-->|HTTP| TUTOR
+  SOLVE --> CL[Claude Sonnet 5.5]
+  TUTOR --> CL
+  BRAIN --> CL
+  TUTOR --> GUARD --> UI
+  TUTOR <--> BANDIT
+  TUTOR <--> VEC
+  BRAIN --> DATA --> VEC
+  UI <-->|speech| EL[ElevenLabs STT/TTS]
+```
 
-Contract: [`shared/contract.ts`](shared/contract.ts) (copied byte-identical into `server/src` and `mobile/src`).
+| Agent | When | Does |
+|---|---|---|
+| **Solver** | photo / example / lesson problem | reads the problem, solves it privately, verifies with `mathjs`, writes the intro |
+| **Scene designer** | every new problem (background) | prepares the "Show me how" scene |
+| **Tutor** | every child turn | tool loop: `recall_memory` · `get_strategy_advice` · `show_component` · `check_answer` · `check_step` · `write_memory` · `speak` |
+| **Reflector** | session end | turns the session log into memory notes |
+| **Self-improver** | session end | rewrites its own skills, saves visual recipes |
+| **Planner** | session end | lesson mastery, next lesson, a warm-up aimed at the recurring mistake |
+| **Curriculum builder** | textbook uploaded | read → plan → write lessons → generate + verify problems |
 
-## Run
+---
 
-`server/.env` (never commit):
+## Run it
+
+**1. Keys** in `server/.env` (never commit). Without `ANTHROPIC_API_KEY` the server runs in mock mode.
+
 ```
 ANTHROPIC_API_KEY=...
 ELEVENLABS_API_KEY=...
 ELEVENLABS_VOICE_ID=...
 ```
-Without `ANTHROPIC_API_KEY` (or with `MOCK=1`) the server runs in mock mode with canned responses.
 
-`mobile/.env` (only for a phone):
-```
-EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8787
-```
+**2. Server**
 
 ```bash
-cd server && npm install && npm run seed && npm run dev
+cd server && npm install && npm run vector:setup && npm run dev
 ```
+
+**3. App**
 
 ```bash
 cd mobile && npm install && npx expo start
 ```
 
-Sample inputs: `samples/textbook-fractions.pdf`, `samples/*.png`.
+Press `w` for the browser, `i` for the iOS simulator, or scan the QR code with Expo Go. On a phone, set
+`EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8787` in `mobile/.env`.
 
-## Demo (3 min)
+Sample inputs: `samples/textbook-fractions.pdf`, `samples/*.png`. Try the **Visuals** link on the home screen
+to see every block.
 
-1. **Story:** 7:30 pm, a kid stuck on fractions, a parent who doesn't know the school's method.
-2. **Upload** the chapter PDF → watch the agent read, plan, write and verify (live trace).
-3. **Lesson:** short written lesson in the textbook's method → "Practice".
-4. **Voice:** child answers wrong → "Nudge is thinking" shows recall → strategy → `FractionBars`
-   → child taps, solves. "Just tell me!" → refused, rephrased.
-5. **Finish:** the planner marks the lesson for review and creates a warm-up targeting
-   "adds denominators" → home screen greets the child with it next time.
-6. **Proof:** "What Nudge learned" — hints per problem going down over sessions.
+<details>
+<summary><b>API</b></summary>
 
-## Later (only if the main demo works)
+| Endpoint | Does |
+|---|---|
+| `POST /session/start` · `POST /session/end` | session; end runs reflector + self-improver + planner in parallel |
+| `POST /problem` | photo or example text → problem (answer kept server-side) + intro |
+| `GET /problem/:id/scene` | the "Show me how" scene, prepared ahead of time |
+| `POST /turn` | tutor turn (audio, text or UI event) → reply + visual + trace |
+| `POST /tts` | speak a scene step in the tutor's voice |
+| `POST /textbook` → `GET /textbook/job/:id` | build a curriculum from a chapter, with a live trace |
+| `GET /curriculum` · `POST /lesson/problem` | lessons, warm-up, next practice problem |
+| `GET /profile` · `POST /profile` | onboarding profile (name, grade, interests) |
+| `GET /brain` | skills, visual recipes, changelog |
+| `GET /insights` · `GET /system` | numbers for the parent dashboard and "Under the hood" |
+| `GET /progress` · `GET /learned` | pebbles/streak, bandit, memory |
+| `GET /vector/status` · `GET /vector/search` · `POST /vector/reindex` | long-term memory |
 
-- Textbook retrieval through the same Qdrant index (lesson excerpts), a multilingual embedding model.
-- Spaced repetition across days, teacher view.
+Contract: [`shared/contract.ts`](shared/contract.ts), copied byte-identical into `server/src` and `mobile/src`.
+
+</details>
+
+<details>
+<summary><b>Repo layout</b></summary>
+
+```
+mobile/                 Expo app
+  src/screens/          Home, Talk, Pick, Lessons, Result, Onboarding, Nudge's brain …
+  src/genui/            GenUI renderer + 22 blocks (scene player, themes, focus ring)
+  src/charts.tsx        parent dashboard charts
+  src/tech.tsx          "Under the hood" view
+  assets/otter/         the mascot's moods (GIFs)
+server/src/
+  tutor.ts              tutor agent loop + hint ladder + leak-guarded replies
+  brain.ts              self-improver, visual recipes, prepared scenes
+  guard.ts              answer-leak guard (text + every visual block)
+  uispec.ts             zod schema + the GenUI docs Claude reads
+  vector/               Qdrant process, embeddings, semantic recall
+  planner.ts · curriculum.ts · insights.ts · system.ts
+shared/contract.ts      API contract
+```
+
+</details>
+
+---
+
+## 3-minute demo
+
+1. **The problem:** Kevin asks ChatGPT, copies "5/8", then can't do 3/7 + 2/7.
+2. **Snap** the same worksheet → the otter retells it and asks one small question.
+3. **"Just tell me"** → refused kindly. A wrong answer → the agent draws two pizzas side by side.
+4. **Solve** → the dancing otter.
+5. **Parents → Nudge's brain** → the skill it just rewrote about Kevin, the hints-per-problem line going down,
+   and *Under the hood*: the agent trace and the memory search, live.
+
+<div align="center">
+<br/>
+<img src="mobile/assets/otter/dancing.gif" width="120" alt="Dancing otter" />
+<br/>
+<sub>Built in a hackathon. Hints, not answers.</sub>
+</div>
