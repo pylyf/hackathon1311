@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Nunito_600SemiBold, Nunito_800ExtraBold, Nunito_900Black } from '@expo-google-fonts/nunito';
 import { Fredoka_600SemiBold, Fredoka_700Bold } from '@expo-google-fonts/fredoka';
@@ -256,8 +256,64 @@ export default function App() {
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
-      <View style={styles.inner}>{screen}</View>
+      <View style={styles.inner}>
+        <PageTransition routeKey={routeKey(route)} depth={DEPTH[route.name] ?? 1}>
+          {screen}
+        </PageTransition>
+      </View>
     </View>
+  );
+}
+
+// ---------- page transitions ----------
+
+/** How "deep" a screen is: going deeper slides in from the right, going back slides in from the left. */
+const DEPTH: Partial<Record<Route['name'], number>> = {
+  onboarding: 0,
+  home: 0,
+  pick: 1,
+  upload: 1,
+  curriculum: 1,
+  learned: 1,
+  demo: 1,
+  lesson: 2,
+  talk: 3,
+  result: 4,
+};
+
+function routeKey(r: Route): string {
+  if (r.name === 'talk') return `talk-${r.problem.problemId}`;
+  if (r.name === 'lesson') return `lesson-${r.lesson.id}`;
+  return r.name;
+}
+
+function PageTransition({ routeKey: key, depth, children }: { routeKey: string; depth: number; children: React.ReactNode }) {
+  const v = useRef(new Animated.Value(0)).current;
+  const last = useRef<{ key: string; depth: number } | null>(null);
+  const dir = useRef(1);
+  // Decide direction and reset the animation in the same render the new screen appears (no flash).
+  if (last.current?.key !== key) {
+    dir.current = !last.current || depth >= last.current.depth ? 1 : -1;
+    last.current = { key, depth };
+    v.setValue(0);
+  }
+  useEffect(() => {
+    Animated.spring(v, { toValue: 1, friction: 9, tension: 70, useNativeDriver: true }).start();
+  }, [key, v]);
+  return (
+    <Animated.View
+      key={key}
+      style={{
+        flex: 1,
+        opacity: v.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0, 1, 1] }),
+        transform: [
+          { translateX: v.interpolate({ inputRange: [0, 1], outputRange: [dir.current * 60, 0] }) },
+          { scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] }) },
+        ],
+      }}
+    >
+      {children}
+    </Animated.View>
   );
 }
 
