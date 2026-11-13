@@ -57,7 +57,12 @@ export async function speakReply(text: string, audioBase64: string | null) {
 /** Reads a finished recording into base64 + mime type, on web and native. */
 export async function recordingToBase64(uri: string): Promise<{ base64: string; mimeType: string }> {
   if (Platform.OS === 'web') {
-    const blob = await (await fetch(uri)).blob();
+    // The browser may finish writing the recording blob slightly after stop() resolves.
+    let blob = await (await fetch(uri)).blob();
+    for (let i = 0; i < 15 && blob.size === 0; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      blob = await (await fetch(uri)).blob();
+    }
     const mimeType = (blob.type || 'audio/webm').split(';')[0];
     const dataUrl: string = await new Promise((resolve, reject) => {
       const r = new FileReader();

@@ -141,6 +141,11 @@ export default function TalkScreen({
       const uri = recorder.uri;
       if (!uri) throw new Error('no recording');
       const { base64, mimeType } = await recordingToBase64(uri);
+      // ~1.5 KB is well under half a second of audio — treat as "nothing recorded".
+      if (base64.length < 2000) {
+        setError("I didn't hear anything. Tap the mic, talk, then tap again to stop!");
+        return;
+      }
       await sendTurn({ audioBase64: base64, audioMimeType: mimeType });
     } catch (e) {
       setError(`I didn't catch that (${errMsg(e)}). Try again or type it!`);

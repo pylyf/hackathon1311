@@ -13,7 +13,7 @@ import { computeStats, reflect } from './reflect.js';
 import { createSession, getOrCreateSession, getSession, persistSessions, type ProblemState } from './state.js';
 import { ensureDataDir, logEvent } from './store.js';
 import { flushPendingHints, introReply, tutorTurn } from './tutor.js';
-import { SttUnavailableError, transcribe } from './voice.js';
+import { SttUnavailableError, synthesize, transcribe } from './voice.js';
 
 ensureDataDir();
 const app = express();
@@ -90,6 +90,20 @@ app.post('/turn', route(async (req, res) => {
     } catch (e) {
       if (e instanceof SttUnavailableError) throw new HttpError(400, e.message);
       throw e;
+    }
+    const bytes = Math.floor((audioBase64.length * 3) / 4);
+    console.log(`[stt] ${bytes} bytes ${audioMimeType ?? '?'} → "${transcript}"`);
+    // Audio arrived but nothing was understood (silence, too short, mic muted):
+    // ask the child to repeat instead of failing. Does not count as an attempt.
+    if (!transcript && !uiEvent) {
+      const sayAgain = "Hmm, I couldn't hear you. Can you say it again, a little louder?";
+      const body: TurnResponse = {
+        transcript: '',
+        reply: { text: sayAgain, audioBase64: await synthesize(sayAgain), ui: null, hint: null },
+        solved: p.solved,
+      };
+      res.json(body);
+      return;
     }
   }
   if (!transcript && !uiEvent) throw new HttpError(400, 'Send text, audio or a uiEvent');
