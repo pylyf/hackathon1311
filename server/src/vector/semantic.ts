@@ -156,8 +156,7 @@ async function upsertNotes(notes: MemoryNote[]): Promise<void> {
     if (indexed.notes.get(pointId(n.id)) === sig) continue;
     points.push({ id: pointId(n.id), vector: await embed(n.text), payload: { noteId: n.id, topic: n.topic, kind: n.kind, text: n.text, seen: n.seen, updatedAt: n.updatedAt, sig } });
   }
-  if (!points.length) return;
-  await client!.upsert(NOTES, { wait: true, points });
+  for (let i = 0; i < points.length; i += 64) await client!.upsert(NOTES, { wait: true, points: points.slice(i, i + 64) });
   for (const p of points) indexed.notes.set(p.id, p.payload.sig);
 }
 
@@ -263,6 +262,7 @@ async function boot(): Promise<void> {
   }
   state = 'ready';
   lastError = null;
+  restarts = 0; // a healthy index earns a fresh set of recovery attempts for the next outage
   log(`ready in ${Date.now() - t0} ms: Qdrant ${QDRANT_URL ? 'at' : 'local binary on'} ${url}, ${EMBED_MODEL} embeddings, ${n.notes} notes + ${n.attempts} past struggles indexed`);
 }
 
@@ -338,26 +338,50 @@ export interface StruggleQuery {
   timeoutMs?: number;
 }
 
-/** Past moments where this child struggled that are closest in meaning to the query, best first. [] if unavailable. */
-export async function similarStruggles(q: StruggleQuery): Promise<PastStruggle[]> {
-  if (state !== 'ready' || !q.problemText.trim()) return [];
+/** The Qdrant query for one StruggleQuery (shared by the single and the batched read). */
+async function struggleRequest(q: StruggleQuery) {
   const byMoment = q.said !== undefined;
   const must_not = [
     ...(q.excludeProblemId ? [{ key: 'problemId', match: { value: q.excludeProblemId } }] : []),
     ...(q.excludeSessionId ? [{ key: 'sessionId', match: { value: q.excludeSessionId } }] : []),
   ];
-  const res = await withTimeout((async () => client!.query(ATTEMPTS, {
+  return {
     query: await embed(byMoment ? momentText(q.problemText, q.said!, q.skill) : problemDoc(q.problemText, q.skill)),
     using: byMoment ? 'moment' : 'problem',
     limit: q.limit ?? 3,
     score_threshold: q.minScore ?? 0.5,
     with_payload: true,
     filter: { ...(q.topic ? { must: [{ key: 'topic', match: { value: q.topic } }] } : {}), ...(must_not.length ? { must_not } : {}) },
-  }))(), q.timeoutMs ?? READ_TIMEOUT_MS);
-  return (res?.points ?? []).map((p) => {
+  };
+}
+
+type ScoredPoint = { score: number; payload?: Record<string, unknown> | null };
+const toStruggles = (points: ScoredPoint[] | undefined): PastStruggle[] =>
+  (points ?? []).map((p) => {
     const { sig: _sig, ...payload } = (p.payload ?? {}) as unknown as AttemptPayload & { sig?: string };
     return { ...payload, score: p.score };
   });
+
+/** Past moments where this child struggled that are closest in meaning to the query, best first. [] if unavailable. */
+export async function similarStruggles(q: StruggleQuery): Promise<PastStruggle[]> {
+  if (state !== 'ready' || !q.problemText.trim()) return [];
+  const res = await withTimeout((async () => client!.query(ATTEMPTS, await struggleRequest(q)))(), q.timeoutMs ?? READ_TIMEOUT_MS);
+  return toStruggles(res?.points);
+}
+
+/** Several struggle queries in ONE Qdrant round trip (queryBatch). Same order as the input; [] each if unavailable. */
+export async function similarStrugglesBatch(qs: StruggleQuery[], timeoutMs = READ_TIMEOUT_MS): Promise<PastStruggle[][]> {
+  const empty = qs.map(() => [] as PastStruggle[]);
+  const live = qs.map((q, i) => ({ q, i })).filter(({ q }) => q.problemText.trim());
+  if (state !== 'ready' || !live.length) return empty;
+  const res = await withTimeout((async () => {
+    const searches = [];
+    for (const { q } of live) searches.push(await struggleRequest(q)); // embed() is serialised anyway
+    return client!.queryBatch(ATTEMPTS, { searches });
+  })(), timeoutMs);
+  if (!res) return empty;
+  live.forEach(({ i }, k) => { empty[i] = toStruggles(res[k]?.points); });
+  return empty;
 }
 
 const DAY = 24 * 3600 * 1000;
@@ -392,8 +416,10 @@ export async function struggleAffinity(problems: { id: string; text: string }[],
   const out = new Map<string, Affinity>();
   if (state !== 'ready') return out;
   const now = Date.now();
-  for (const p of problems) {
-    const hits = await similarStruggles({ problemText: p.text, skill, topic, limit: 5, minScore: 0.45, timeoutMs: 600 });
+  // one batched request instead of one round trip per candidate problem
+  const all = await similarStrugglesBatch(problems.map((p) => ({ problemText: p.text, skill, topic, limit: 5, minScore: 0.45 })), 600 + 50 * problems.length);
+  for (const [i, p] of problems.entries()) {
+    const hits = all[i];
     if (!hits.length) continue;
     const scored = hits.map((h) => ({ h, v: h.score * weight(h, now) })).sort((a, b) => b.v - a.v);
     out.set(p.id, { score: scored[0].v + 0.05 * Math.min(3, scored.length - 1), because: scored[0].h });
